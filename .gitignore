@@ -7,11 +7,15 @@ release.properties
 dependency-reduced-pom.xml
 buildNumber.properties
 .mvn/timing.properties
+.flattened-pom.xml
 # https://maven.apache.org/wrapper/#usage-without-binary-jar
 .mvn/wrapper/maven-wrapper.jar
 
+.idea
 # Eclipse m2e generated files
 # Eclipse Core
 .project
 # JDT-specific (Eclipse Java Development Tools)
 .classpath
+
+.DS_Store
