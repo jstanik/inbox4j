@@ -11,6 +11,7 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.TimeUnit;
 import org.inbox4j.InboxMessage.Status;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,6 +23,7 @@ class ProcessingInbox implements Inbox {
   private final InboxMessageRepository repository;
   private final Map<String, InboxMessageChannel> channels;
   private final int maxConcurrency;
+  private final OtelPlugin otelPlugin;
   private final ExecutorService executorService;
   private final Thread processingLoopThread;
 
@@ -33,13 +35,15 @@ class ProcessingInbox implements Inbox {
       InboxMessageRepository inboxMessageRepository,
       Collection<InboxMessageChannel> channels,
       ExecutorService executorService,
+      OtelPlugin otelPlugin,
       int maxConcurrency
   ) {
     this.repository = inboxMessageRepository;
     this.channels = Map.copyOf(
         channels.stream().collect(toMap(InboxMessageChannel::getName, identity())));
-    this.maxConcurrency = maxConcurrency;
     this.executorService = executorService;
+    this.otelPlugin = otelPlugin;
+    this.maxConcurrency = maxConcurrency;
 
     this.processingLoopThread = new Thread(
         Thread.currentThread().getThreadGroup(),
@@ -59,6 +63,11 @@ class ProcessingInbox implements Inbox {
     var inboxMessage = repository.insert(data);
     events.add(new InboxMessageInserted(inboxMessage));
     return inboxMessage;
+  }
+
+  @Override
+  public InboxMessage load(long id) {
+    return repository.load(id);
   }
 
   private void processingLoop() {
@@ -124,6 +133,21 @@ class ProcessingInbox implements Inbox {
               + message.getChannelName());
     }
 
+    CompletableFuture<Void> completableFuture = createProcessingFuture(message, channel);
+
+    executorService.execute(
+        () -> otelPlugin.getContextInstaller().install(message.getTraceContext(), () -> {
+          try {
+            channel.processMessage(message);
+            completableFuture.complete(null);
+          } catch (Exception exception) {
+            completableFuture.completeExceptionally(exception);
+          }
+        }));
+  }
+
+  private CompletableFuture<Void> createProcessingFuture(InboxMessage message,
+      InboxMessageChannel channel) {
     CompletableFuture<Void> completableFuture = new CompletableFuture<>();
     completableFuture.whenComplete((result, error) -> {
       InboxMessage updateMessage;
@@ -137,22 +161,21 @@ class ProcessingInbox implements Inbox {
         updateMessage = repository.update(message, Status.COMPLETED, message.getMetadata());
       }
 
-      events.add(new ProcessingInbox.ProcessingTerminated(updateMessage));
+      events.add(new ProcessingTerminated(updateMessage));
     });
-
-    executorService.execute(() -> {
-      try {
-        channel.processMessage(message);
-        completableFuture.complete(null);
-      } catch (Exception exception) {
-        completableFuture.completeExceptionally(exception);
-      }
-    });
+    return completableFuture;
   }
 
   void stop() {
     processingLoopThread.interrupt();
     executorService.shutdown();
+
+    try {
+      processingLoopThread.join(5000);
+      executorService.awaitTermination(5, TimeUnit.SECONDS);
+    } catch (InterruptedException interruptedException) {
+      Thread.currentThread().interrupt();
+    }
   }
 
   private sealed interface Event {

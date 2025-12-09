@@ -88,10 +88,13 @@ class InboxMessageRepository {
 
   private final DataSource dataSource;
   private final InstantSource instantSource;
+  private final OtelPlugin otelPlugin;
 
-  InboxMessageRepository(DataSource dataSource, InstantSource instantSource) {
+  InboxMessageRepository(DataSource dataSource, InstantSource instantSource,
+      OtelPlugin otelPlugin) {
     this.dataSource = dataSource;
     this.instantSource = instantSource;
+    this.otelPlugin = otelPlugin;
   }
 
   InboxMessage insert(InboxMessageData data) {
@@ -103,6 +106,10 @@ class InboxMessageRepository {
       insertInboxMessageTarget(connection, inboxMessageId, data.getTargetNames());
       return loadInboxMessageEntity(connection, inboxMessageId);
     });
+  }
+
+  InboxMessage load(long id) {
+    return transaction(dataSource, connection -> loadInboxMessageEntity(connection, id));
   }
 
   InboxMessage update(InboxMessage message, Status newStatus, byte[] metadata) {
@@ -243,7 +250,7 @@ class InboxMessageRepository {
       } else {
         statement.setBytes(index++, metadata);
       }
-      statement.setString(index++, "");
+      otelPlugin.getContextInjector().inject(statement, index++);
       statement.setString(index, auditLog(currentInstant, "message inserted"));
       statement.execute();
       var resultSet = statement.getGeneratedKeys();

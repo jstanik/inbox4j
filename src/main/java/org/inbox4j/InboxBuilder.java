@@ -12,6 +12,8 @@ import javax.sql.DataSource;
 
 public class InboxBuilder {
 
+  private static final OtelPlugin OTEL_PLUGIN = new OtelPlugin();
+
   private final DataSource dataSource;
   private final List<InboxMessageChannel> channels = new ArrayList<>();
   private ExecutorService executorService;
@@ -42,12 +44,13 @@ public class InboxBuilder {
   }
 
   public Inbox build() {
-    var repository = new InboxMessageRepository(dataSource, InstantSource.system());
+    var repository = new InboxMessageRepository(dataSource, InstantSource.system(), OTEL_PLUGIN);
 
     ExecutorService configuredExecutorService = executorService;
     if (configuredExecutorService == null) {
       configuredExecutorService = Executors.newCachedThreadPool();
     }
-    return new ProcessingInbox(repository, channels, configuredExecutorService, maxConcurrency);
+    return new ProcessingInbox(repository, channels, configuredExecutorService, OTEL_PLUGIN,
+        maxConcurrency);
   }
 }

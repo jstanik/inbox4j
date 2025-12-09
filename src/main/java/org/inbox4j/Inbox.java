@@ -9,5 +9,7 @@ public interface Inbox {
   }
 
   InboxMessage insert(InboxMessageData data);
+
+  InboxMessage load(long id);
 }
 

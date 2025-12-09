@@ -4,6 +4,10 @@ import static java.time.temporal.ChronoUnit.MILLIS;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.opentelemetry.api.GlobalOpenTelemetry;
+import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.context.Context;
+import io.opentelemetry.context.Scope;
 import java.time.Instant;
 import java.util.Arrays;
 import java.util.List;
@@ -16,7 +20,7 @@ class InboxMessageRepositoryTest extends AbstractDatabaseTest {
 
   @Test
   void insert() {
-    InboxMessageRepository cut = new InboxMessageRepository(dataSource, instantSource);
+    InboxMessageRepository cut = new InboxMessageRepository(dataSource, instantSource, otelPlugin);
     InboxMessageData data = createInboxMessageData();
 
     InboxMessageEntity entity = (InboxMessageEntity) cut.insert(data);
@@ -34,8 +38,38 @@ class InboxMessageRepositoryTest extends AbstractDatabaseTest {
   }
 
   @Test
+  void insertWithOtelEnabled() {
+    InboxMessageRepository cut = new InboxMessageRepository(dataSource, instantSource, otelPlugin);
+    InboxMessageData data = createInboxMessageData();
+
+    Span span =
+        GlobalOpenTelemetry.getTracer(InboxMessageRepositoryTest.class.getName())
+            .spanBuilder("inbox")
+            .setParent(Context.root())
+            .startSpan();
+
+    InboxMessageEntity entity;
+    try (Scope ignore = span.makeCurrent()) {
+      entity = (InboxMessageEntity) cut.insert(data);
+    } finally {
+      span.end();
+    }
+    assertThat(entity.getTraceContext()).startsWith("traceparent:");
+  }
+
+  @Test
+  void insertWithOtelDisabled() {
+    InboxMessageRepository cut = new InboxMessageRepository(dataSource, instantSource,
+        new OtelPlugin(false));
+    InboxMessageData data = createInboxMessageData();
+    var entity = (InboxMessageEntity) cut.insert(data);
+
+    assertThat(entity.getTraceContext()).isNull();
+  }
+
+  @Test
   void insertFailsWhenNoTargetNameProvided() {
-    InboxMessageRepository cut = new InboxMessageRepository(dataSource, instantSource);
+    InboxMessageRepository cut = new InboxMessageRepository(dataSource, instantSource, otelPlugin);
     InboxMessageData data = new InboxMessageData("channel", new byte[0], List.of(), new byte[0]);
 
     assertThatThrownBy(() -> cut.insert(data))
@@ -45,7 +79,7 @@ class InboxMessageRepositoryTest extends AbstractDatabaseTest {
 
   @Test
   void update() {
-    InboxMessageRepository cut = new InboxMessageRepository(dataSource, instantSource);
+    InboxMessageRepository cut = new InboxMessageRepository(dataSource, instantSource, otelPlugin);
     InboxMessage message = cut.insert(createInboxMessageData());
 
     Instant updateInstant = instantSource.instant().plusSeconds(10);
@@ -64,7 +98,7 @@ class InboxMessageRepositoryTest extends AbstractDatabaseTest {
 
   @Test
   void updateWithNullMetadataClearsMetadata() {
-    InboxMessageRepository cut = new InboxMessageRepository(dataSource, instantSource);
+    InboxMessageRepository cut = new InboxMessageRepository(dataSource, instantSource, otelPlugin);
     InboxMessage message = cut.insert(
         new InboxMessageData("channel", new byte[0], "targetName", new byte[]{65}));
 
@@ -76,7 +110,7 @@ class InboxMessageRepositoryTest extends AbstractDatabaseTest {
 
   @Test
   void updateDetectsStaleDataUpdate() {
-    InboxMessageRepository cut = new InboxMessageRepository(dataSource, instantSource);
+    InboxMessageRepository cut = new InboxMessageRepository(dataSource, instantSource, otelPlugin);
     InboxMessage message = cut.insert(createInboxMessageData());
     cut.update(message, Status.IN_PROGRESS, new byte[0]);
 
@@ -86,7 +120,7 @@ class InboxMessageRepositoryTest extends AbstractDatabaseTest {
 
   @Test
   void findAllProcessingRelevant() {
-    var cut = new InboxMessageRepository(dataSource, instantSource);
+    var cut = new InboxMessageRepository(dataSource, instantSource, otelPlugin);
     setUpInboxMessage(cut, Status.COMPLETED, "A-1", "A-2");
     var messageA = setUpInboxMessage(cut, Status.NEW, "A-1", "A-2");
     setUpInboxMessage(cut, Status.NEW, "A-1");
@@ -105,7 +139,7 @@ class InboxMessageRepositoryTest extends AbstractDatabaseTest {
 
   @Test
   void findNextProcessingRelevantReturnEmptyWhenInCompletedState() {
-    var cut = new InboxMessageRepository(dataSource, instantSource);
+    var cut = new InboxMessageRepository(dataSource, instantSource, otelPlugin);
     setUpInboxMessage(cut, Status.COMPLETED, "A-1", "A-2");
 
     var actual = cut.findNextProcessingRelevant(List.of("A-1", "A-2"));
@@ -115,7 +149,7 @@ class InboxMessageRepositoryTest extends AbstractDatabaseTest {
 
   @Test
   void findNextProcessingRelevantReturnEmptyWhenInInProgressState() {
-    var cut = new InboxMessageRepository(dataSource, instantSource);
+    var cut = new InboxMessageRepository(dataSource, instantSource, otelPlugin);
     setUpInboxMessage(cut, Status.IN_PROGRESS, "A-1", "A-2");
     setUpInboxMessage(cut, Status.NEW, "A-1",
         "A-2"); // this should not be returned as it entered inbox after the previous message
@@ -127,7 +161,7 @@ class InboxMessageRepositoryTest extends AbstractDatabaseTest {
 
   @Test
   void findNextProcessingRelevantReturnFirstInNewState() {
-    var cut = new InboxMessageRepository(dataSource, instantSource);
+    var cut = new InboxMessageRepository(dataSource, instantSource, otelPlugin);
     setUpInboxMessage(cut, Status.COMPLETED, "A-1", "A-2");
     setUpInboxMessage(cut, Status.ERROR, "A-1", "A-2");
     setUpInboxMessage(cut, Status.COMPLETED, "A-1", "A-2");

@@ -10,6 +10,7 @@ import org.junit.jupiter.api.BeforeEach;
 
 public abstract class AbstractDatabaseTest {
 
+  protected static final OtelPlugin otelPlugin = new OtelPlugin();
   protected static final DataSource dataSource = postgresDataSource();
 
   protected static DataSource postgresDataSource() {

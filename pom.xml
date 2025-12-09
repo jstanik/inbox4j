@@ -15,7 +15,10 @@
     <assertj.version>3.27.6</assertj.version>
     <hikari-cp.version>7.0.2</hikari-cp.version>
     <junit-jupiter.version>6.0.0</junit-jupiter.version>
+    <logback.version>1.5.21</logback.version>
     <mockito.version>5.20.0</mockito.version>
+    <opentelemetry.version>1.57.0</opentelemetry.version>
+    <opentelemetry-javaagent.version>2.22.0</opentelemetry-javaagent.version>
     <postgresql-jdbc-driver.version>42.7.8</postgresql-jdbc-driver.version>
     <postgresql-testcontainers.version>2.0.2</postgresql-testcontainers.version>
     <slf4j.version>2.0.17</slf4j.version>
@@ -39,9 +42,24 @@
   <dependencyManagement>
     <dependencies>
       <dependency>
+        <groupId>ch.qos.logback</groupId>
+        <artifactId>logback-classic</artifactId>
+        <version>${logback.version}</version>
+      </dependency>
+      <dependency>
         <groupId>com.zaxxer</groupId>
         <artifactId>HikariCP</artifactId>
         <version>${hikari-cp.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.opentelemetry</groupId>
+        <artifactId>opentelemetry-api</artifactId>
+        <version>${opentelemetry.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.opentelemetry.javaagent</groupId>
+        <artifactId>opentelemetry-javaagent</artifactId>
+        <version>${opentelemetry-javaagent.version}</version>
       </dependency>
       <dependency>
         <groupId>org.assertj</groupId>
@@ -84,6 +102,21 @@
     <dependency>
       <groupId>org.slf4j</groupId>
       <artifactId>slf4j-api</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>io.opentelemetry</groupId>
+      <artifactId>opentelemetry-api</artifactId>
+      <optional>true</optional>
+    </dependency>
+    <dependency>
+      <groupId>io.opentelemetry.javaagent</groupId>
+      <artifactId>opentelemetry-javaagent</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>ch.qos.logback</groupId>
+      <artifactId>logback-classic</artifactId>
+      <scope>test</scope>
     </dependency>
     <dependency>
       <groupId>org.junit.jupiter</groupId>
@@ -200,10 +233,14 @@
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-surefire-plugin</artifactId>
         <configuration>
-          <argLine>@{argLine} -javaagent:${org.mockito:mockito-core:jar}</argLine>
+          <argLine>@{argLine} -javaagent:${org.mockito:mockito-core:jar} -javaagent:${io.opentelemetry.javaagent:opentelemetry-javaagent:jar}</argLine>
+          <environmentVariables>
+            <OTEL_TRACES_EXPORTER>none</OTEL_TRACES_EXPORTER>
+            <OTEL_METRICS_EXPORTER>none</OTEL_METRICS_EXPORTER>
+            <OTEL_LOGS_EXPORTER>none</OTEL_LOGS_EXPORTER>
+          </environmentVariables>
         </configuration>
       </plugin>
     </plugins>
   </build>
-
 </project>
