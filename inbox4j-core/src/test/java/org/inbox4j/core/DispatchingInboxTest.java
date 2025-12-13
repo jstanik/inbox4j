@@ -181,10 +181,9 @@ class DispatchingInboxTest extends AbstractDatabaseTest {
   private static class TestChannel implements InboxMessageChannel {
 
     private final String name;
-    private final Map<String, CountDownLatch> awaitLatchMap = new ConcurrentHashMap<>();
-    private final Map<String, CountDownLatch> processLatchMap = new ConcurrentHashMap<>();
-    private final Map<String, InboxMessage> lastProcessedMessages = new ConcurrentHashMap<>();
-    private final Map<String, String> lastTraceIds = new ConcurrentHashMap<>();
+    private final Map<String, CountDownLatch> firstRendezvousLatches = new ConcurrentHashMap<>();
+    private final Map<String, CountDownLatch> secondRendezvousLatches = new ConcurrentHashMap<>();
+    private final Map<String, InboxMessageContext> recordedContexts = new ConcurrentHashMap<>();
     private final Map<String, Function<InboxMessage, ProcessingResult>> resultProviders =
         new ConcurrentHashMap<>();
 
@@ -200,18 +199,13 @@ class DispatchingInboxTest extends AbstractDatabaseTest {
     @Override
     public ProcessingResult processMessage(InboxMessage message, ProcessingContext context) {
       String recipientName = message.getRecipientNames().stream().findFirst().orElseThrow();
-      lastProcessedMessages.put(recipientName, message);
-      lastTraceIds.put(recipientName, Span.current().getSpanContext().getTraceId());
-      awaitLatchMap.computeIfAbsent(recipientName, k -> new CountDownLatch(1)).countDown();
-      try {
-        processLatchMap
-            .computeIfAbsent(recipientName, k -> new CountDownLatch(1))
-            .await(60, TimeUnit.SECONDS);
-        processLatchMap.put(recipientName, new CountDownLatch(1));
-      } catch (InterruptedException e) {
-        Thread.currentThread().interrupt();
-        throw new RuntimeException(e);
-      }
+
+      InboxMessageContext inboxMessageContext =
+          new InboxMessageContext(message, Span.current().getSpanContext().getTraceId());
+      recordedContexts.put(recipientName, inboxMessageContext);
+
+      firstRendezvous(recipientName, false);
+      secondRendezvous(recipientName, false);
 
       var resultProvider =
           resultProviders.computeIfAbsent(recipientName, key -> ProcessingSucceeded::new);
@@ -224,22 +218,38 @@ class DispatchingInboxTest extends AbstractDatabaseTest {
 
     InboxMessageContext awaitProcessing(
         String recipientName, Function<InboxMessage, ProcessingResult> resultProvider) {
-      InboxMessage message;
-      String traceId;
+
+      firstRendezvous(recipientName, true);
+      InboxMessageContext recordedContext = recordedContexts.remove(recipientName);
+      resultProviders.put(recipientName, resultProvider);
+      secondRendezvous(recipientName, true);
+
+      return recordedContext;
+    }
+
+    private void firstRendezvous(String recipientName, boolean reset) {
+      rendezvous(firstRendezvousLatches, recipientName, reset);
+    }
+
+    private void secondRendezvous(String recipientName, boolean reset) {
+      rendezvous(secondRendezvousLatches, recipientName, reset);
+    }
+
+    private void rendezvous(
+        Map<String, CountDownLatch> latches, String recipientName, boolean reset) {
+      var latch = latches.computeIfAbsent(recipientName, k -> new CountDownLatch(2));
+      latch.countDown();
       try {
-        var latch = awaitLatchMap.computeIfAbsent(recipientName, k -> new CountDownLatch(1));
-        latch.await(60, TimeUnit.SECONDS);
-        awaitLatchMap.put(recipientName, new CountDownLatch(1));
-        message = lastProcessedMessages.remove(recipientName);
-        traceId = lastTraceIds.remove(recipientName);
-        resultProviders.put(recipientName, resultProvider);
-        processLatchMap.computeIfAbsent(recipientName, k -> new CountDownLatch(1)).countDown();
+        if (!latch.await(20, TimeUnit.SECONDS)) {
+          throw new IllegalStateException("No rendezvous for recipient " + recipientName);
+        }
       } catch (InterruptedException e) {
         Thread.currentThread().interrupt();
         throw new RuntimeException(e);
       }
-
-      return new InboxMessageContext(message, traceId);
+      if (reset) {
+        latches.put(recipientName, new CountDownLatch(2));
+      }
     }
   }
 
