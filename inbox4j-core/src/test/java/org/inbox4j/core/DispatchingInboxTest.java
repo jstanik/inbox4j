@@ -100,6 +100,29 @@ class DispatchingInboxTest extends AbstractDatabaseTest {
   }
 
   @Test
+  void inboxDispatchingRetriesFoundInDatabase() {
+    MutableInstantSource instantSource =
+        new MutableInstantSource(Instant.now().truncatedTo(ChronoUnit.MILLIS));
+
+    InboxMessageRepository repo =
+        new InboxMessageRepository(dataSource, instantSource, new OtelPlugin());
+    var recipientName = "recipient-to-retry";
+    var message = repo.insert(new MessageInsertionRequest(CHANNEL, new byte[0], recipientName));
+    var retryAt = instantSource.instant().minus(100, ChronoUnit.MILLIS);
+    repo.update(message, Status.RETRY, null, retryAt);
+
+    TestChannel channel = new TestChannel(CHANNEL);
+    DispatchingInbox inbox =
+        (DispatchingInbox)
+            Inbox.builder(dataSource).withInstantSource(instantSource).addChannel(channel).build();
+
+    channel.awaitProcessing(recipientName);
+    assertStatusReached(message.getId(), Status.COMPLETED, inbox, Duration.ofSeconds(10));
+
+    inbox.stop();
+  }
+
+  @Test
   void inboxDispatchingWithOpenTelemetry() {
     TestChannel channel = new TestChannel(CHANNEL);
 

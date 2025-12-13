@@ -13,21 +13,24 @@
  */
 package org.inbox4j.core;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import org.inbox4j.core.InboxMessage.Status;
 
-record InboxMessageView(long id, Recipient recipient) {
+record InboxMessageView(long id, Status status, Instant retryAt, Recipient recipient) {
 
   static class Builder {
 
     final long id;
     final Status status;
+    final Instant retryAt;
     final List<String> names = new ArrayList<>();
 
-    Builder(long id, Status status) {
+    Builder(long id, Status status, Instant retryAt) {
       this.id = id;
       this.status = status;
+      this.retryAt = retryAt;
     }
 
     Builder addName(String name) {
@@ -36,7 +39,7 @@ record InboxMessageView(long id, Recipient recipient) {
     }
 
     InboxMessageView build() {
-      return new InboxMessageView(id, new Recipient(names));
+      return new InboxMessageView(id, status, retryAt, new Recipient(names));
     }
   }
 }

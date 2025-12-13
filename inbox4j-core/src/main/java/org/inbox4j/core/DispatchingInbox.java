@@ -16,6 +16,8 @@ package org.inbox4j.core;
 import static java.util.function.Function.identity;
 import static java.util.stream.Collectors.toMap;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.time.InstantSource;
 import java.util.Collection;
 import java.util.Deque;
@@ -49,7 +51,7 @@ class DispatchingInbox implements Inbox {
   private final InstantSource instantSource;
 
   private final Deque<Recipient> recipientsToCheck = new LinkedList<>();
-  private final Deque<RetryTriggered> retryEvents = new LinkedList<>();
+  private final Deque<RetryFired> retryRequests = new LinkedList<>();
   private final BlockingQueue<Event> events = new ArrayBlockingQueue<>(100, true);
   private int parallelCount = 0;
 
@@ -90,13 +92,14 @@ class DispatchingInbox implements Inbox {
     return inboxMessage;
   }
 
-  InboxMessage load(long id) {
+  @Override
+  public InboxMessage load(long id) {
     return repository.load(id);
   }
 
   private void dispatchLoop() {
-    initRetryTriggers();
-    initRecipientsToCheck();
+    scheduleRetries();
+    loadWaitingRecipients();
     try {
       while (!Thread.currentThread().isInterrupted()) {
         processNextEvent();
@@ -123,8 +126,8 @@ class DispatchingInbox implements Inbox {
       LOGGER.debug("Parallel count decreased: {}", parallelCount);
     }
 
-    if (event instanceof RetryTriggered retry) {
-      retryEvents.add(retry);
+    if (event instanceof RetryFired retry) {
+      retryRequests.add(retry);
     } else {
       recipientsToCheck.add(event.getRecipient());
     }
@@ -132,12 +135,12 @@ class DispatchingInbox implements Inbox {
 
   private boolean shouldTryToFetchNextMessage() {
     return parallelCount < maxConcurrency
-        && (!retryEvents.isEmpty() || !recipientsToCheck.isEmpty());
+        && (!retryRequests.isEmpty() || !recipientsToCheck.isEmpty());
   }
 
   private InboxMessage tryToFetchNextMessage() {
-    if (!retryEvents.isEmpty()) {
-      return retryEvents.removeFirst().message;
+    if (!retryRequests.isEmpty()) {
+      return retryRequests.removeFirst().message;
     } else if (!recipientsToCheck.isEmpty()) {
       return repository
           .findNextProcessingRelevant(recipientsToCheck.removeFirst().names())
@@ -163,7 +166,7 @@ class DispatchingInbox implements Inbox {
     }
   }
 
-  private void initRecipientsToCheck() {
+  private void loadWaitingRecipients() {
     List<Recipient> initialRecipientToCheck =
         repository.findAllProcessingRelevant().stream().map(InboxMessageView::recipient).toList();
 
@@ -171,8 +174,18 @@ class DispatchingInbox implements Inbox {
     recipientsToCheck.addAll(initialRecipientToCheck);
   }
 
-  private void initRetryTriggers() {
-    // TODO load messages in RETRY status and schedule them
+  private void scheduleRetries() {
+    Instant currentTime = instantSource.instant();
+    repository
+        .findInboxMessagesForRetry()
+        .forEach(
+            messageView -> {
+              var delay = Duration.between(currentTime, messageView.retryAt());
+              if (delay.isNegative()) {
+                delay = Duration.ZERO;
+              }
+              scheduleRetry(messageView.id(), delay);
+            });
   }
 
   private void dispatch(InboxMessage message) {
@@ -248,11 +261,19 @@ class DispatchingInbox implements Inbox {
 
     var updatedMessage =
         repository.update(retry.inboxMessage, Status.RETRY, retry.getMetadata(), retryAt);
-    retryScheduler.schedule(
-        (Runnable) () -> events.add(new RetryTriggered(updatedMessage)),
-        retry.getDelay().toMillis(),
-        TimeUnit.MILLISECONDS);
+    scheduleRetry(updatedMessage.getId(), retry.getDelay());
     return updatedMessage;
+  }
+
+  private void scheduleRetry(long messageId, Duration delay) {
+    retryScheduler.schedule(() -> fireRetry(messageId), delay.toMillis(), TimeUnit.MILLISECONDS);
+  }
+
+  private void fireRetry(long messageId) {
+    InboxMessage message = repository.load(messageId);
+    if (message.getStatus().equals(Status.RETRY)) {
+      events.add(new RetryFired(message));
+    }
   }
 
   void stop() {
@@ -262,8 +283,6 @@ class DispatchingInbox implements Inbox {
 
     try {
       dispatchLoopThread.join(5000);
-      executorService.awaitTermination(5, TimeUnit.SECONDS);
-      retryScheduler.awaitTermination(5, TimeUnit.SECONDS);
     } catch (InterruptedException interruptedException) {
       Thread.currentThread().interrupt();
     }
@@ -290,7 +309,7 @@ class DispatchingInbox implements Inbox {
     }
   }
 
-  private record RetryTriggered(InboxMessage message) implements Event {
+  private record RetryFired(InboxMessage message) implements Event {
     @Override
     public Recipient getRecipient() {
       return new Recipient(message.getRecipientNames());

@@ -107,6 +107,9 @@ public interface InboxMessageChannel {
      */
     public Retry(InboxMessage inboxMessage, byte[] metadata, Duration delay) {
       super(inboxMessage, metadata);
+      if (delay.isNegative()) {
+        throw new IllegalArgumentException("delay cannot be negative");
+      }
       this.delay = delay;
     }
 

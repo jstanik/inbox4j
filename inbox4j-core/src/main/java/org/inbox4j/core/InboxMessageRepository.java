@@ -31,6 +31,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Consumer;
 import javax.sql.DataSource;
 import org.inbox4j.core.InboxMessage.Status;
 import org.inbox4j.core.InboxMessageEntity.Builder;
@@ -74,6 +75,7 @@ class InboxMessageRepository {
       """
       SELECT message.id,
              message.status,
+             message.retry_at,
              recipient.name
         FROM inbox_message message
         JOIN inbox_message_recipient recipient ON recipient.inbox_message_fk = message.id
@@ -85,12 +87,25 @@ class InboxMessageRepository {
       """
       SELECT message.id,
              message.status,
+             message.retry_at,
              recipient.name
         FROM inbox_message message
         JOIN inbox_message_recipient recipient ON recipient.inbox_message_fk = message.id
        WHERE message.status NOT IN ('COMPLETED', 'ERROR', 'RETRY')
          AND recipient.name IN ($$name_placeholders$$)
        ORDER BY message.id ASC
+      """;
+
+  private static final String SQL_FIND_FOR_RETRY =
+      """
+      SELECT message.id,
+             message.status,
+             message.retry_at,
+             recipient.name
+        FROM inbox_message message
+        JOIN inbox_message_recipient recipient ON recipient.inbox_message_fk = message.id
+       WHERE message.status = 'RETRY'
+       ORDER BY message.retry_at ASC
       """;
 
   private static final String SQL_INSERT_INBOX_MESSAGE =
@@ -200,31 +215,29 @@ class InboxMessageRepository {
         connection -> {
           try (var statement = connection.prepareStatement(SQL_FIND_ALL_PROCESSING_RELEVANT)) {
             try (ResultSet resultSet = statement.executeQuery()) {
-              if (!resultSet.next()) {
-                return List.of();
-              }
-
               Set<String> visitedNames = new HashSet<>();
               List<InboxMessageView> result = new ArrayList<>();
-              InboxMessageView.Builder builder =
-                  new InboxMessageView.Builder(
-                      resultSet.getLong(COLUMN_ID),
-                      Status.forName(resultSet.getString(COLUMN_STATUS)));
-              do {
-                long messageId = resultSet.getLong(COLUMN_ID);
-                if (builder.id != messageId) {
-                  addProcessingRelevant(visitedNames, result, builder);
-                  var status = Status.forName(resultSet.getString(COLUMN_STATUS));
-                  builder = new InboxMessageView.Builder(messageId, status);
-                }
-                String recipientName = resultSet.getString(COLUMN_NAME);
-                builder.addName(recipientName);
-              } while (resultSet.next());
-              addProcessingRelevant(visitedNames, result, builder);
+
+              mapInboxMessageViews(
+                  resultSet, view -> addProcessingRelevant(visitedNames, result, view));
+
               return List.copyOf(result);
             }
           }
         });
+  }
+
+  private void addProcessingRelevant(
+      Set<String> visitedNames, List<InboxMessageView> references, InboxMessageView view) {
+
+    var names = view.recipient().names();
+    boolean shouldAdd =
+        view.status().equals(Status.NEW) && names.stream().noneMatch(visitedNames::contains);
+    visitedNames.addAll(names);
+
+    if (shouldAdd) {
+      references.add(view);
+    }
   }
 
   Optional<InboxMessage> findNextProcessingRelevant(Collection<String> recipientNames) {
@@ -265,20 +278,6 @@ class InboxMessageRepository {
         });
   }
 
-  private void addProcessingRelevant(
-      Set<String> visitedNames,
-      List<InboxMessageView> references,
-      InboxMessageView.Builder builder) {
-    boolean shouldAdd =
-        builder.status.equals(Status.NEW)
-            && builder.names.stream().noneMatch(visitedNames::contains);
-    visitedNames.addAll(builder.names);
-
-    if (shouldAdd) {
-      references.add(builder.build());
-    }
-  }
-
   private long insertInboxMessage(Connection connection, MessageInsertionRequest data)
       throws SQLException {
 
@@ -316,6 +315,45 @@ class InboxMessageRepository {
       }
       statement.executeBatch();
     }
+  }
+
+  List<InboxMessageView> findInboxMessagesForRetry() {
+    return transaction(
+        dataSource,
+        connection -> {
+          try (var statement = connection.prepareStatement(SQL_FIND_FOR_RETRY)) {
+            try (ResultSet resultSet = statement.executeQuery()) {
+              List<InboxMessageView> result = new ArrayList<>();
+              mapInboxMessageViews(resultSet, result::add);
+              return List.copyOf(result);
+            }
+          }
+        });
+  }
+
+  private void mapInboxMessageViews(ResultSet resultSet, Consumer<InboxMessageView> consumer)
+      throws SQLException {
+    if (!resultSet.next()) {
+      return;
+    }
+
+    InboxMessageView.Builder builder =
+        new InboxMessageView.Builder(
+            resultSet.getLong(COLUMN_ID),
+            Status.forName(resultSet.getString(COLUMN_STATUS)),
+            toInstant(resultSet.getTimestamp(COLUMN_RETRY_AT)));
+    do {
+      long messageId = resultSet.getLong(COLUMN_ID);
+      Instant retryAt = toInstant(resultSet.getTimestamp(COLUMN_RETRY_AT));
+      if (builder.id != messageId) {
+        consumer.accept(builder.build());
+        var status = Status.forName(resultSet.getString(COLUMN_STATUS));
+        builder = new InboxMessageView.Builder(messageId, status, retryAt);
+      }
+      String recipientName = resultSet.getString(COLUMN_NAME);
+      builder.addName(recipientName);
+    } while (resultSet.next());
+    consumer.accept(builder.build());
   }
 
   private InboxMessageEntity loadInboxMessageEntity(Connection connection, long id)

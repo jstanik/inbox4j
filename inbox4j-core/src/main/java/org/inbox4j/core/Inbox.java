@@ -44,4 +44,12 @@ public interface Inbox {
    * @return the inserted inbox message
    */
   InboxMessage insert(MessageInsertionRequest request);
+
+  /**
+   * Loads a message by its identifier.
+   *
+   * @param id the message identifier
+   * @return the loaded message
+   */
+  InboxMessage load(long id);
 }
