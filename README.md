@@ -10,3 +10,5 @@ https://codecov.io/gh/jstanik/inbox4j
 WORK IN PROGRESS!
 
 Implementation of Inbox pattern for Java applications.
+
+Visit [https://github.com/jstanik/inbox4j](https://github.com/jstanik/inbox4j).
