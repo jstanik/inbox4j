@@ -13,6 +13,7 @@
  */
 package org.inbox4j.core;
 
+import static java.util.Objects.requireNonNull;
 import static org.inbox4j.core.TransactionTemplate.transaction;
 
 import java.sql.Connection;
@@ -38,94 +39,6 @@ import org.inbox4j.core.InboxMessageEntity.Builder;
 
 class InboxMessageRepository {
 
-  private static final String SQL_SELECT_INBOX_MESSAGE =
-      """
-      SELECT message.id,
-             message.version,
-             message.created_at,
-             message.updated_at,
-             message.channel,
-             message.status,
-             message.payload,
-             message.metadata,
-             message.retry_at,
-             message.trace_context,
-             message.audit_log,
-             recipient.name
-        FROM inbox_message message
-        LEFT JOIN inbox_message_recipient recipient ON recipient.inbox_message_fk = message.id
-       WHERE message.id = ?
-      """;
-
-  @SuppressWarnings("java:S5665")
-  private static final String SQL_UPDATE_INBOX_MESSAGE =
-      """
-      UPDATE inbox_message
-         SET status = ?,
-             metadata = ?,
-             retry_at = ?,
-             version = version + 1,
-             updated_at = ?,
-             audit_log = audit_log || '\n' || ?
-       WHERE id = ?
-         AND version = ?
-      """;
-
-  private static final String SQL_FIND_ALL_PROCESSING_RELEVANT =
-      """
-      SELECT message.id,
-             message.status,
-             message.retry_at,
-             recipient.name
-        FROM inbox_message message
-        JOIN inbox_message_recipient recipient ON recipient.inbox_message_fk = message.id
-       WHERE message.status NOT IN ('COMPLETED', 'ERROR', 'RETRY')
-       ORDER BY message.id ASC
-      """;
-
-  private static final String SQL_FIND_NEXT_PROCESSING_RELEVANT_BY_RECIPIENT_NAME =
-      """
-      SELECT message.id,
-             message.status,
-             message.retry_at,
-             recipient.name
-        FROM inbox_message message
-        JOIN inbox_message_recipient recipient ON recipient.inbox_message_fk = message.id
-       WHERE message.status NOT IN ('COMPLETED', 'ERROR', 'RETRY')
-         AND recipient.name IN ($$name_placeholders$$)
-       ORDER BY message.id ASC
-      """;
-
-  private static final String SQL_FIND_FOR_RETRY =
-      """
-      SELECT message.id,
-             message.status,
-             message.retry_at,
-             recipient.name
-        FROM inbox_message message
-        JOIN inbox_message_recipient recipient ON recipient.inbox_message_fk = message.id
-       WHERE message.status = 'RETRY'
-       ORDER BY message.retry_at ASC
-      """;
-
-  private static final String SQL_INSERT_INBOX_MESSAGE =
-      """
-      INSERT INTO inbox_message(
-               version,
-               created_at,
-               updated_at,
-               channel,
-               status,
-               payload,
-               metadata,
-               trace_context,
-               audit_log
-             )
-             VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)
-      """;
-  private static final String SQL_INSERT_INBOX_MESSAGE_RECIPIENT =
-      "INSERT INTO inbox_message_recipient (name, inbox_message_fk) VALUES (?, ?)";
-
   private static final String COLUMN_ID = "id";
   private static final String COLUMN_STATUS = "status";
   private static final String COLUMN_NAME = "name";
@@ -142,12 +55,13 @@ class InboxMessageRepository {
   private final DataSource dataSource;
   private final InstantSource instantSource;
   private final OtelPlugin otelPlugin;
+  private final Sqls sqls;
 
-  InboxMessageRepository(
-      DataSource dataSource, InstantSource instantSource, OtelPlugin otelPlugin) {
-    this.dataSource = dataSource;
-    this.instantSource = instantSource;
-    this.otelPlugin = otelPlugin;
+  InboxMessageRepository(Configuration configuration) {
+    this.dataSource = configuration.dataSource;
+    this.instantSource = configuration.instantSource;
+    this.otelPlugin = configuration.otelPlugin;
+    this.sqls = new Sqls(configuration.tableInboxMessage, configuration.tableInboxMessageRecipient);
   }
 
   InboxMessage insert(MessageInsertionRequest data) {
@@ -172,7 +86,7 @@ class InboxMessageRepository {
         dataSource,
         connection -> {
           int updatedRows;
-          try (var statement = connection.prepareStatement(SQL_UPDATE_INBOX_MESSAGE)) {
+          try (var statement = connection.prepareStatement(sqls.getUpdateInboxMessage())) {
             var currentInstant = instantSource.instant();
             int index = 1;
             statement.setString(index++, newStatus.name());
@@ -213,7 +127,7 @@ class InboxMessageRepository {
     return transaction(
         dataSource,
         connection -> {
-          try (var statement = connection.prepareStatement(SQL_FIND_ALL_PROCESSING_RELEVANT)) {
+          try (var statement = connection.prepareStatement(sqls.getFindAllProcessingRelevant())) {
             try (ResultSet resultSet = statement.executeQuery()) {
               Set<String> visitedNames = new HashSet<>();
               List<InboxMessageView> result = new ArrayList<>();
@@ -252,8 +166,8 @@ class InboxMessageRepository {
 
           try (var statement =
               connection.prepareStatement(
-                  SQL_FIND_NEXT_PROCESSING_RELEVANT_BY_RECIPIENT_NAME.replace(
-                      "$$name_placeholders$$", placeholders))) {
+                  sqls.getFindNextProcessingRelevantByRecipientName()
+                      .replace("$$name_placeholders$$", placeholders))) {
 
             int index = 1;
             for (String recipientName : recipientNames) {
@@ -282,7 +196,8 @@ class InboxMessageRepository {
       throws SQLException {
 
     try (var statement =
-        connection.prepareStatement(SQL_INSERT_INBOX_MESSAGE, Statement.RETURN_GENERATED_KEYS)) {
+        connection.prepareStatement(
+            sqls.getInsertInboxMessage(), Statement.RETURN_GENERATED_KEYS)) {
       var currentInstant = instantSource.instant();
       int index = 1;
       statement.setTimestamp(index++, new Timestamp(currentInstant.toEpochMilli()));
@@ -307,7 +222,7 @@ class InboxMessageRepository {
 
   private void insertInboxMessageRecipient(
       Connection connection, long inboxMessageId, Set<String> recipientNames) throws SQLException {
-    try (var statement = connection.prepareStatement(SQL_INSERT_INBOX_MESSAGE_RECIPIENT)) {
+    try (var statement = connection.prepareStatement(sqls.getInsertInboxMessageRecipient())) {
       statement.setLong(2, inboxMessageId);
       for (String name : recipientNames) {
         statement.setString(1, name);
@@ -321,7 +236,7 @@ class InboxMessageRepository {
     return transaction(
         dataSource,
         connection -> {
-          try (var statement = connection.prepareStatement(SQL_FIND_FOR_RETRY)) {
+          try (var statement = connection.prepareStatement(sqls.getFindForRetry())) {
             try (ResultSet resultSet = statement.executeQuery()) {
               List<InboxMessageView> result = new ArrayList<>();
               mapInboxMessageViews(resultSet, result::add);
@@ -359,7 +274,7 @@ class InboxMessageRepository {
   private InboxMessageEntity loadInboxMessageEntity(Connection connection, long id)
       throws SQLException {
 
-    try (var statement = connection.prepareStatement(SQL_SELECT_INBOX_MESSAGE)) {
+    try (var statement = connection.prepareStatement(sqls.getSelectInboxMessage())) {
       statement.setLong(1, id);
 
       try (var resultSet = statement.executeQuery()) {
@@ -428,5 +343,205 @@ class InboxMessageRepository {
     }
 
     return auditLog(instant, String.join("; ", parts));
+  }
+
+  private static class Sqls {
+
+    private static final String SELECT_ALL_FIELDS =
+        """
+        SELECT message.id,
+               message.version,
+               message.created_at,
+               message.updated_at,
+               message.channel,
+               message.status,
+               message.payload,
+               message.metadata,
+               message.retry_at,
+               message.trace_context,
+               message.audit_log,
+               recipient.name
+        """;
+
+    private static final String SELECT_VIEW_FIELDS =
+        """
+        SELECT message.id,
+               message.status,
+               message.retry_at,
+               recipient.name
+        """;
+
+    private static final String SQL_SELECT_INBOX_MESSAGE =
+        SELECT_ALL_FIELDS
+            + """
+              FROM $$inbox_message$$ message
+              LEFT JOIN $$inbox_message_recipient$$ recipient ON recipient.inbox_message_fk = message.id
+             WHERE message.id = ?
+            """;
+
+    @SuppressWarnings("java:S5665")
+    private static final String SQL_UPDATE_INBOX_MESSAGE =
+        """
+        UPDATE $$inbox_message$$
+           SET status = ?,
+               metadata = ?,
+               retry_at = ?,
+               version = version + 1,
+               updated_at = ?,
+               audit_log = audit_log || '\n' || ?
+         WHERE id = ?
+           AND version = ?
+        """;
+
+    private static final String SQL_FIND_ALL_PROCESSING_RELEVANT =
+        SELECT_VIEW_FIELDS
+            + """
+              FROM $$inbox_message$$ message
+              JOIN $$inbox_message_recipient$$ recipient ON recipient.inbox_message_fk = message.id
+             WHERE message.status NOT IN ('COMPLETED', 'ERROR', 'RETRY')
+             ORDER BY message.id ASC
+            """;
+
+    private static final String SQL_FIND_NEXT_PROCESSING_RELEVANT_BY_RECIPIENT_NAME =
+        SELECT_VIEW_FIELDS
+            + """
+              FROM $$inbox_message$$ message
+              JOIN $$inbox_message_recipient$$ recipient ON recipient.inbox_message_fk = message.id
+             WHERE message.status NOT IN ('COMPLETED', 'ERROR', 'RETRY')
+               AND recipient.name IN ($$name_placeholders$$)
+             ORDER BY message.id ASC
+            """;
+
+    private static final String SQL_FIND_FOR_RETRY =
+        SELECT_VIEW_FIELDS
+            + """
+              FROM $$inbox_message$$ message
+              JOIN $$inbox_message_recipient$$ recipient ON recipient.inbox_message_fk = message.id
+             WHERE message.status = 'RETRY'
+             ORDER BY message.retry_at ASC
+            """;
+
+    private static final String SQL_INSERT_INBOX_MESSAGE =
+        """
+        INSERT INTO $$inbox_message$$ (
+                 version,
+                 created_at,
+                 updated_at,
+                 channel,
+                 status,
+                 payload,
+                 metadata,
+                 trace_context,
+                 audit_log
+               )
+               VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)
+        """;
+    private static final String SQL_INSERT_INBOX_MESSAGE_RECIPIENT =
+        "INSERT INTO $$inbox_message_recipient$$ (name, inbox_message_fk) VALUES (?, ?)";
+
+    private static final String PLACEHOLDER_INBOX_MESSAGE = "$$inbox_message$$";
+    private static final String PLACEHOLDER_INBOX_MESSAGE_RECIPIENT = "$$inbox_message_recipient$$";
+
+    private static final String DEFAULT_TABLE_NAME_INBOX_MESSAGE_RECIPIENT =
+        "inbox_message_recipient";
+    private static final String DEFAULT_TABLE_NAME_INBOX_MESSAGE = "inbox_message";
+
+    private final String selectInboxMessage;
+    private final String updateInboxMessage;
+    private final String findAllProcessingRelevant;
+    private final String findNextProcessingRelevantByRecipientName;
+    private final String findForRetry;
+    private final String insertInboxMessage;
+    private final String insertInboxMessageRecipient;
+
+    Sqls(String tableMessage, String tableRecipient) {
+      tableMessage = tableMessage == null ? DEFAULT_TABLE_NAME_INBOX_MESSAGE : tableMessage;
+      tableRecipient =
+          tableRecipient == null ? DEFAULT_TABLE_NAME_INBOX_MESSAGE_RECIPIENT : tableRecipient;
+
+      this.selectInboxMessage =
+          replaceTablePlaceholders(SQL_SELECT_INBOX_MESSAGE, tableMessage, tableRecipient);
+      this.updateInboxMessage =
+          replaceTablePlaceholders(SQL_UPDATE_INBOX_MESSAGE, tableMessage, tableRecipient);
+      this.findAllProcessingRelevant =
+          replaceTablePlaceholders(SQL_FIND_ALL_PROCESSING_RELEVANT, tableMessage, tableRecipient);
+      this.findNextProcessingRelevantByRecipientName =
+          replaceTablePlaceholders(
+              SQL_FIND_NEXT_PROCESSING_RELEVANT_BY_RECIPIENT_NAME, tableMessage, tableRecipient);
+      this.findForRetry =
+          replaceTablePlaceholders(SQL_FIND_FOR_RETRY, tableMessage, tableRecipient);
+      this.insertInboxMessage =
+          replaceTablePlaceholders(SQL_INSERT_INBOX_MESSAGE, tableMessage, tableRecipient);
+      this.insertInboxMessageRecipient =
+          replaceTablePlaceholders(
+              SQL_INSERT_INBOX_MESSAGE_RECIPIENT, tableMessage, tableRecipient);
+    }
+
+    private static String replaceTablePlaceholders(
+        String sql, String tableMessage, String tableRecipient) {
+      return sql.replace(PLACEHOLDER_INBOX_MESSAGE, tableMessage)
+          .replace(PLACEHOLDER_INBOX_MESSAGE_RECIPIENT, tableRecipient);
+    }
+
+    public String getSelectInboxMessage() {
+      return selectInboxMessage;
+    }
+
+    public String getUpdateInboxMessage() {
+      return updateInboxMessage;
+    }
+
+    public String getFindAllProcessingRelevant() {
+      return findAllProcessingRelevant;
+    }
+
+    public String getFindNextProcessingRelevantByRecipientName() {
+      return findNextProcessingRelevantByRecipientName;
+    }
+
+    public String getFindForRetry() {
+      return findForRetry;
+    }
+
+    public String getInsertInboxMessage() {
+      return insertInboxMessage;
+    }
+
+    public String getInsertInboxMessageRecipient() {
+      return insertInboxMessageRecipient;
+    }
+  }
+
+  static class Configuration {
+
+    private final DataSource dataSource;
+    private InstantSource instantSource = InstantSource.system();
+    private OtelPlugin otelPlugin = new OtelPlugin();
+    private String tableInboxMessage;
+    private String tableInboxMessageRecipient;
+
+    Configuration(DataSource dataSource) {
+      this.dataSource = requireNonNull(dataSource);
+    }
+
+    public Configuration withInstantSource(InstantSource instantSource) {
+      this.instantSource = instantSource;
+      return this;
+    }
+
+    public Configuration withOtelPlugin(OtelPlugin otelPlugin) {
+      this.otelPlugin = otelPlugin;
+      return this;
+    }
+
+    public Configuration withTableInboxMessage(String tableInboxMessage) {
+      this.tableInboxMessage = tableInboxMessage;
+      return this;
+    }
+
+    public Configuration withTableInboxMessageRecipient(String tableInboxMessageRecipient) {
+      this.tableInboxMessageRecipient = tableInboxMessageRecipient;
+      return this;
+    }
   }
 }

@@ -21,16 +21,20 @@ import java.sql.SQLException;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 
-public abstract class AbstractDatabaseTest {
+abstract class AbstractDatabaseTest {
 
-  protected static final OtelPlugin otelPlugin = new OtelPlugin();
-  protected static final DataSource dataSource = postgresDataSource();
+  static final OtelPlugin otelPlugin = new OtelPlugin();
+  static final DataSource dataSource = postgresDataSource();
 
   protected static DataSource postgresDataSource() {
+    return postgresDataSource(
+        "jdbc:tc:postgresql:18.1:///postgres?TC_INITSCRIPT=file:src/main/sql/postgresql-ddl.sql");
+  }
+
+  protected static DataSource postgresDataSource(String connectionUrl) {
     HikariConfig config = new HikariConfig();
 
-    config.setJdbcUrl(
-        "jdbc:tc:postgresql:18.1:///postgres?TC_INITSCRIPT=file:src/main/sql/postgresql-ddl.sql");
+    config.setJdbcUrl(connectionUrl);
     config.setUsername("postgres");
     config.setPassword("postgres");
     config.setAutoCommit(false);

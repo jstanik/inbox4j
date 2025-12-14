@@ -23,6 +23,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import javax.sql.DataSource;
+import org.inbox4j.core.InboxMessageRepository.Configuration;
 
 public class InboxBuilder {
 
@@ -34,6 +35,8 @@ public class InboxBuilder {
   private ScheduledExecutorService retryScheduler;
   private int maxConcurrency = Integer.MAX_VALUE;
   private InstantSource instantSource = InstantSource.system();
+  private String tableInboxMessage;
+  private String tableInboxMessageRecipient;
 
   public InboxBuilder(DataSource dataSource) {
     this.dataSource = requireNonNull(dataSource);
@@ -69,8 +72,24 @@ public class InboxBuilder {
     return this;
   }
 
+  public InboxBuilder withTableInboxMessage(String tableInboxMessage) {
+    this.tableInboxMessage = tableInboxMessage;
+    return this;
+  }
+
+  public InboxBuilder withTableInboxMessageRecipient(String tableInboxMessageRecipient) {
+    this.tableInboxMessageRecipient = tableInboxMessageRecipient;
+    return this;
+  }
+
   public Inbox build() {
-    var repository = new InboxMessageRepository(dataSource, InstantSource.system(), OTEL_PLUGIN);
+    var repository =
+        new InboxMessageRepository(
+            new Configuration(dataSource)
+                .withInstantSource(instantSource)
+                .withOtelPlugin(OTEL_PLUGIN)
+                .withTableInboxMessage(tableInboxMessage)
+                .withTableInboxMessageRecipient(tableInboxMessageRecipient));
 
     ExecutorService configuredExecutorService = executorService;
     if (configuredExecutorService == null) {

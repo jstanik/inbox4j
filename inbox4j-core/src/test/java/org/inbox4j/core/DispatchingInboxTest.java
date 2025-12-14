@@ -35,6 +35,7 @@ import java.util.function.Function;
 import org.inbox4j.core.InboxMessage.Status;
 import org.inbox4j.core.InboxMessageChannel.ProcessingSucceeded;
 import org.inbox4j.core.InboxMessageChannel.Retry;
+import org.inbox4j.core.InboxMessageRepository.Configuration;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
@@ -105,7 +106,7 @@ class DispatchingInboxTest extends AbstractDatabaseTest {
         new MutableInstantSource(Instant.now().truncatedTo(ChronoUnit.MILLIS));
 
     InboxMessageRepository repo =
-        new InboxMessageRepository(dataSource, instantSource, new OtelPlugin());
+        new InboxMessageRepository(new Configuration(dataSource).withInstantSource(instantSource));
     var recipientName = "recipient-to-retry";
     var message = repo.insert(new MessageInsertionRequest(CHANNEL, new byte[0], recipientName));
     var retryAt = instantSource.instant().minus(100, ChronoUnit.MILLIS);

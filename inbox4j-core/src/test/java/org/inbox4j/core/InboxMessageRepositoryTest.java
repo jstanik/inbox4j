@@ -15,6 +15,7 @@ package org.inbox4j.core;
 
 import static java.time.temporal.ChronoUnit.MILLIS;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.opentelemetry.api.GlobalOpenTelemetry;
@@ -25,15 +26,18 @@ import java.time.Instant;
 import java.util.Arrays;
 import java.util.List;
 import org.inbox4j.core.InboxMessage.Status;
+import org.inbox4j.core.InboxMessageRepository.Configuration;
 import org.junit.jupiter.api.Test;
 
 class InboxMessageRepositoryTest extends AbstractDatabaseTest {
 
   MutableInstantSource instantSource = new MutableInstantSource(Instant.now().truncatedTo(MILLIS));
+  Configuration configuration =
+      new Configuration(dataSource).withInstantSource(instantSource).withOtelPlugin(otelPlugin);
 
   @Test
   void insert() {
-    InboxMessageRepository cut = new InboxMessageRepository(dataSource, instantSource, otelPlugin);
+    InboxMessageRepository cut = new InboxMessageRepository(configuration);
     MessageInsertionRequest request = builderMessageInsertionRequest();
 
     InboxMessageEntity entity = (InboxMessageEntity) cut.insert(request);
@@ -52,7 +56,7 @@ class InboxMessageRepositoryTest extends AbstractDatabaseTest {
 
   @Test
   void insertWithOtelEnabled() {
-    InboxMessageRepository cut = new InboxMessageRepository(dataSource, instantSource, otelPlugin);
+    InboxMessageRepository cut = new InboxMessageRepository(configuration);
     MessageInsertionRequest request = builderMessageInsertionRequest();
 
     Span span =
@@ -73,7 +77,7 @@ class InboxMessageRepositoryTest extends AbstractDatabaseTest {
   @Test
   void insertWithOtelDisabled() {
     InboxMessageRepository cut =
-        new InboxMessageRepository(dataSource, instantSource, new OtelPlugin(false));
+        new InboxMessageRepository(configuration.withOtelPlugin(new OtelPlugin(false)));
     MessageInsertionRequest request = builderMessageInsertionRequest();
     var entity = (InboxMessageEntity) cut.insert(request);
 
@@ -82,7 +86,7 @@ class InboxMessageRepositoryTest extends AbstractDatabaseTest {
 
   @Test
   void insertFailsWhenNoRecipientNameProvided() {
-    InboxMessageRepository cut = new InboxMessageRepository(dataSource, instantSource, otelPlugin);
+    InboxMessageRepository cut = new InboxMessageRepository(configuration);
     MessageInsertionRequest data =
         new MessageInsertionRequest("channel", new byte[0], List.of(), new byte[0]);
 
@@ -93,7 +97,7 @@ class InboxMessageRepositoryTest extends AbstractDatabaseTest {
 
   @Test
   void update() {
-    InboxMessageRepository cut = new InboxMessageRepository(dataSource, instantSource, otelPlugin);
+    InboxMessageRepository cut = new InboxMessageRepository(configuration);
     InboxMessage message = cut.insert(builderMessageInsertionRequest());
 
     Instant updateInstant = instantSource.instant().plusSeconds(10);
@@ -112,7 +116,7 @@ class InboxMessageRepositoryTest extends AbstractDatabaseTest {
 
   @Test
   void updateWithNullMetadataClearsMetadata() {
-    InboxMessageRepository cut = new InboxMessageRepository(dataSource, instantSource, otelPlugin);
+    InboxMessageRepository cut = new InboxMessageRepository(configuration);
     InboxMessage message =
         cut.insert(
             new MessageInsertionRequest("channel", new byte[0], "recipientName", new byte[] {65}));
@@ -125,7 +129,7 @@ class InboxMessageRepositoryTest extends AbstractDatabaseTest {
 
   @Test
   void updateDetectsStaleDataUpdate() {
-    InboxMessageRepository cut = new InboxMessageRepository(dataSource, instantSource, otelPlugin);
+    InboxMessageRepository cut = new InboxMessageRepository(configuration);
     InboxMessage message = cut.insert(builderMessageInsertionRequest());
     cut.update(message, Status.IN_PROGRESS, new byte[0], null);
 
@@ -135,7 +139,7 @@ class InboxMessageRepositoryTest extends AbstractDatabaseTest {
 
   @Test
   void updateToRetryStateRequiresRetryAtInstant() {
-    InboxMessageRepository cut = new InboxMessageRepository(dataSource, instantSource, otelPlugin);
+    InboxMessageRepository cut = new InboxMessageRepository(configuration);
     InboxMessage message = cut.insert(builderMessageInsertionRequest());
 
     assertThatThrownBy(() -> cut.update(message, Status.RETRY, new byte[0], null))
@@ -144,7 +148,7 @@ class InboxMessageRepositoryTest extends AbstractDatabaseTest {
 
   @Test
   void updateToRetryState() {
-    InboxMessageRepository cut = new InboxMessageRepository(dataSource, instantSource, otelPlugin);
+    InboxMessageRepository cut = new InboxMessageRepository(configuration);
     InboxMessage message = cut.insert(builderMessageInsertionRequest());
     Instant retryAt = instantSource.instant().plusSeconds(10);
 
@@ -156,7 +160,7 @@ class InboxMessageRepositoryTest extends AbstractDatabaseTest {
 
   @Test
   void updateFromRetryStateRequiresClearRetryAtInstant() {
-    InboxMessageRepository cut = new InboxMessageRepository(dataSource, instantSource, otelPlugin);
+    InboxMessageRepository cut = new InboxMessageRepository(configuration);
     InboxMessage message = cut.insert(builderMessageInsertionRequest());
     Instant retryAt = instantSource.instant().plusSeconds(10);
     InboxMessage retryMessage = cut.update(message, Status.RETRY, new byte[0], retryAt);
@@ -168,7 +172,7 @@ class InboxMessageRepositoryTest extends AbstractDatabaseTest {
 
   @Test
   void updateFromRetryState() {
-    InboxMessageRepository cut = new InboxMessageRepository(dataSource, instantSource, otelPlugin);
+    InboxMessageRepository cut = new InboxMessageRepository(configuration);
     InboxMessage message = cut.insert(builderMessageInsertionRequest());
     Instant retryAt = instantSource.instant().plusSeconds(10);
     InboxMessage retryMessage = cut.update(message, Status.RETRY, new byte[0], retryAt);
@@ -181,7 +185,7 @@ class InboxMessageRepositoryTest extends AbstractDatabaseTest {
 
   @Test
   void findAllProcessingRelevant() {
-    var cut = new InboxMessageRepository(dataSource, instantSource, otelPlugin);
+    var cut = new InboxMessageRepository(configuration);
     setUpInboxMessage(cut, Status.COMPLETED, "A-1", "A-2");
     var messageA = setUpInboxMessage(cut, Status.NEW, "A-1", "A-2");
     setUpInboxMessage(cut, Status.NEW, "A-1");
@@ -201,7 +205,7 @@ class InboxMessageRepositoryTest extends AbstractDatabaseTest {
 
   @Test
   void findNextProcessingRelevantReturnEmptyWhenInCompletedState() {
-    var cut = new InboxMessageRepository(dataSource, instantSource, otelPlugin);
+    var cut = new InboxMessageRepository(configuration);
     setUpInboxMessage(cut, Status.COMPLETED, "A-1", "A-2");
 
     var actual = cut.findNextProcessingRelevant(List.of("A-1", "A-2"));
@@ -211,7 +215,7 @@ class InboxMessageRepositoryTest extends AbstractDatabaseTest {
 
   @Test
   void findNextProcessingRelevantReturnEmptyWhenInInProgressState() {
-    var cut = new InboxMessageRepository(dataSource, instantSource, otelPlugin);
+    var cut = new InboxMessageRepository(configuration);
     setUpInboxMessage(cut, Status.IN_PROGRESS, "A-1", "A-2");
     setUpInboxMessage(
         cut,
@@ -226,7 +230,7 @@ class InboxMessageRepositoryTest extends AbstractDatabaseTest {
 
   @Test
   void findNextProcessingRelevantReturnFirstInNewState() {
-    var cut = new InboxMessageRepository(dataSource, instantSource, otelPlugin);
+    var cut = new InboxMessageRepository(configuration);
     setUpInboxMessage(cut, Status.COMPLETED, "A-1", "A-2");
     setUpInboxMessage(cut, Status.ERROR, "A-1", "A-2");
     setUpInboxMessage(cut, Status.COMPLETED, "A-1", "A-2");
@@ -242,6 +246,21 @@ class InboxMessageRepositoryTest extends AbstractDatabaseTest {
     assertThat(actual)
         .hasValueSatisfying(
             actualMessage -> assertThat(actualMessage.getId()).isEqualTo(expectedMessage.getId()));
+  }
+
+  @Test
+  void customTableNames() {
+    var cut =
+        new InboxMessageRepository(
+            new Configuration(
+                    postgresDataSource(
+                        "jdbc:tc:postgresql:18.1:///postgres?TC_INITSCRIPT=sql/postgresql-custom-table-names-ddl.sql"))
+                .withTableInboxMessage("inbox_message_custom")
+                .withTableInboxMessageRecipient("inbox_message_recipient_custom"));
+
+    MessageInsertionRequest request = builderMessageInsertionRequest();
+
+    assertThatCode(() -> cut.insert(request)).doesNotThrowAnyException();
   }
 
   private static InboxMessage setUpInboxMessage(
