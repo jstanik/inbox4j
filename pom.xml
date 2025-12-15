@@ -36,7 +36,7 @@
     <maven-jar-plugin.version>3.4.2</maven-jar-plugin.version>
     <maven-project-info-reports-plugin>3.6.1</maven-project-info-reports-plugin>
     <maven-resources-plugin.version>3.4.0</maven-resources-plugin.version>
-    <maven-site-plugin.version>3.12.1</maven-site-plugin.version>
+    <maven-site-plugin.version>3.21.0</maven-site-plugin.version>
     <maven-surefire-plugin.version>3.5.4</maven-surefire-plugin.version>
     <spotless-maven-plugin.version>3.1.0</spotless-maven-plugin.version>
 
