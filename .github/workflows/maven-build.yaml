@@ -21,12 +21,4 @@ jobs:
           cache: 'maven'
 
       - name: Build with Maven
-        run: mvn -B clean verify
-
-      - uses: codecov/codecov-action@v5
-        with:
-          directory: coverage-reports/target
-          name: inbox4j-coverage # optional
-          verbose: true # optional (default = false)
-        env:
-          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        run: mvn -B clean verify -Pcode-coverage
