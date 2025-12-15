@@ -31,16 +31,13 @@ public interface InboxMessageChannel {
    * Processes the inbox message.
    *
    * @param message the inbox message to process
-   * @param context the processing context
    * @return the result of the processing
    */
-  ProcessingResult processMessage(InboxMessage message, ProcessingContext context);
-
-  /** Allows the handler to get access to various processing context information. */
-  interface ProcessingContext {}
+  ProcessingResult processMessage(InboxMessage message);
 
   /** The result of the inbox message processing. */
-  sealed interface ProcessingResult permits ProcessingSucceeded, ProcessingFailed, Retry {}
+  sealed interface ProcessingResult
+      permits Delegate, ProcessingFailed, ProcessingSucceeded, Retry {}
 
   /** A successful result. */
   final class ProcessingSucceeded extends AbstractProcessingResult implements ProcessingResult {

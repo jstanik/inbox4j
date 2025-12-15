@@ -29,8 +29,8 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import org.inbox4j.core.DelegationReferenceIssuer.IdVersion;
 import org.inbox4j.core.InboxMessage.Status;
-import org.inbox4j.core.InboxMessageChannel.ProcessingContext;
 import org.inbox4j.core.InboxMessageChannel.ProcessingFailed;
 import org.inbox4j.core.InboxMessageChannel.ProcessingSucceeded;
 import org.inbox4j.core.InboxMessageChannel.Retry;
@@ -53,6 +53,8 @@ class DispatchingInbox implements Inbox {
   private final Deque<Recipient> recipientsToCheck = new LinkedList<>();
   private final Deque<RetryFired> retryRequests = new LinkedList<>();
   private final BlockingQueue<Event> events = new ArrayBlockingQueue<>(100, true);
+  private final DelegationReferenceIssuer delegationReferenceIssuer =
+      new DelegationReferenceIssuer();
   private int parallelCount = 0;
 
   DispatchingInbox(
@@ -69,7 +71,7 @@ class DispatchingInbox implements Inbox {
     this.executorService = executorService;
     this.retryScheduler = retryScheduler;
     this.otelPlugin = otelPlugin;
-    this.maxConcurrency = maxConcurrency;
+    this.maxConcurrency = validateMaxConcurrency(maxConcurrency);
     this.instantSource = instantSource;
 
     this.dispatchLoopThread =
@@ -81,6 +83,13 @@ class DispatchingInbox implements Inbox {
     this.dispatchLoopThread.start();
   }
 
+  private static int validateMaxConcurrency(int maxConcurrency) {
+    if (maxConcurrency <= 0) {
+      throw new IllegalArgumentException("maxConcurrency must be > 0");
+    }
+    return maxConcurrency;
+  }
+
   @Override
   public InboxMessage insert(MessageInsertionRequest request) {
     if (channels.get(request.getChannelName()) == null) {
@@ -88,13 +97,37 @@ class DispatchingInbox implements Inbox {
           "No channel with the name '" + request.getChannelName() + "' configured");
     }
     var inboxMessage = repository.insert(request);
-    events.add(new InboxMessageInserted(inboxMessage));
+    putEvent(new InboxMessageInserted(inboxMessage));
     return inboxMessage;
   }
 
   @Override
   public InboxMessage load(long id) {
     return repository.load(id);
+  }
+
+  @Override
+  public void complete(DelegationReference delegationReference, boolean success) {
+    IdVersion idVersion = delegationReferenceIssuer.dereference(delegationReference);
+    InboxMessage message = repository.load(idVersion.id());
+    if (message.getVersion() != idVersion.version()) {
+      throw new StaleDataUpdateException(
+          "InboxMessage{id="
+              + message.getId()
+              + "} version mismatch. Expected: "
+              + idVersion.version()
+              + ". Actual: "
+              + message.getVersion());
+    }
+
+    Status status;
+    if (success) {
+      status = Status.COMPLETED;
+    } else {
+      status = Status.ERROR;
+    }
+    var updatedMessage = repository.update(message, status, message.getMetadata(), null);
+    putEvent(new DelegationCompleted(updatedMessage));
   }
 
   private void dispatchLoop() {
@@ -118,6 +151,7 @@ class DispatchingInbox implements Inbox {
   }
 
   private void processNextEvent() throws InterruptedException {
+    LOGGER.atDebug().addArgument(events::size).log("Event Queue size: {}");
     Event event = events.take();
     LOGGER.debug("Event received: {}", event);
 
@@ -148,6 +182,14 @@ class DispatchingInbox implements Inbox {
           .orElse(null);
     } else {
       throw new IllegalStateException("Nothing to fetch!");
+    }
+  }
+
+  private void putEvent(Event event) {
+    try {
+      events.put(event);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
     }
   }
 
@@ -191,8 +233,11 @@ class DispatchingInbox implements Inbox {
   private void dispatch(InboxMessage message) {
     checkMessageIsInProgress(message);
     var action = createDispatchingAction(message);
-    executorService.execute(
-        () -> otelPlugin.getContextInstaller().install(message.getTraceContext(), action));
+    execute(action, message.getTraceContext());
+  }
+
+  private void execute(Runnable runnable, String traceContext) {
+    executorService.execute(() -> otelPlugin.getContextInstaller().install(traceContext, runnable));
   }
 
   private Runnable createDispatchingAction(InboxMessage message) {
@@ -200,7 +245,7 @@ class DispatchingInbox implements Inbox {
     return () -> {
       LOGGER.debug(
           "Dispatching InboxMessage{id={}} to the channel: {}", message.getId(), channel.getName());
-      var processingResult = channel.processMessage(message, new DefaultProcessingContext());
+      var processingResult = channel.processMessage(message);
       LOGGER.debug(
           "Channel {} finished processing the InboxMessage{id={}} with the result: {}",
           channel.getName(),
@@ -214,11 +259,13 @@ class DispatchingInbox implements Inbox {
         updatedMessage = handleProcessingFailed(failed);
       } else if (processingResult instanceof Retry retry) {
         updatedMessage = handleRetryRequested(retry);
+      } else if (processingResult instanceof Delegate delegate) {
+        updatedMessage = handleDelegateRequested(delegate);
       } else {
         throw new UnsupportedOperationException(
             "Result type" + processingResult.getClass().getName() + " not supported yet!");
       }
-      events.add(new ProcessingTerminated(updatedMessage));
+      putEvent(new ProcessingTerminated(updatedMessage));
     };
   }
 
@@ -272,8 +319,22 @@ class DispatchingInbox implements Inbox {
   private void fireRetry(long messageId) {
     InboxMessage message = repository.load(messageId);
     if (message.getStatus().equals(Status.RETRY)) {
-      events.add(new RetryFired(message));
+      putEvent(new RetryFired(message));
     }
+  }
+
+  private InboxMessage handleDelegateRequested(Delegate delegate) {
+    var updatedMessage =
+        repository.update(delegate.inboxMessage, Status.DELEGATED, delegate.getMetadata(), null);
+
+    execute(
+        () -> {
+          var delegationReference = delegationReferenceIssuer.issueReference(updatedMessage);
+          delegate.getDelegatingCallback().delegate(updatedMessage, delegationReference);
+        },
+        updatedMessage.getTraceContext());
+
+    return updatedMessage;
   }
 
   void stop() {
@@ -309,12 +370,18 @@ class DispatchingInbox implements Inbox {
     }
   }
 
-  private record RetryFired(InboxMessage message) implements Event {
+  private record DelegationCompleted(InboxMessage message) implements Event {
+
     @Override
     public Recipient getRecipient() {
       return new Recipient(message.getRecipientNames());
     }
   }
 
-  private static class DefaultProcessingContext implements ProcessingContext {}
+  private record RetryFired(InboxMessage message) implements Event {
+    @Override
+    public Recipient getRecipient() {
+      return new Recipient(message.getRecipientNames());
+    }
+  }
 }
