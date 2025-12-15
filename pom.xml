@@ -20,7 +20,7 @@
     <logback.version>1.5.21</logback.version>
     <mockito.version>5.20.0</mockito.version>
     <opentelemetry.version>1.57.0</opentelemetry.version>
-    <opentelemetry-javaagent.version>2.22.0</opentelemetry-javaagent.version>
+    <opentelemetry-javaagent.version>2.23.0</opentelemetry-javaagent.version>
     <postgresql-jdbc-driver.version>42.7.8</postgresql-jdbc-driver.version>
     <postgresql-testcontainers.version>2.0.2</postgresql-testcontainers.version>
     <slf4j.version>2.0.17</slf4j.version>
