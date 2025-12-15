@@ -28,6 +28,9 @@ import java.util.List;
 import org.inbox4j.core.InboxMessage.Status;
 import org.inbox4j.core.InboxMessageRepository.Configuration;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.EnumSource.Mode;
 
 class InboxMessageRepositoryTest extends AbstractDatabaseTest {
 
@@ -203,6 +206,24 @@ class InboxMessageRepositoryTest extends AbstractDatabaseTest {
         .containsExactly(messageA.getId(), messageC.getId());
   }
 
+  @ParameterizedTest
+  @EnumSource(
+      value = Status.class,
+      names = {"COMPLETED", "ERROR", "NEW"},
+      mode = Mode.EXCLUDE)
+  void findAllProcessingRelevantFindsNothingIfIntermediateStatusAfterTerminalStatus(
+      Status intermediateStatus) {
+    var cut = new InboxMessageRepository(configuration);
+    setUpInboxMessage(cut, Status.COMPLETED, "R1");
+    setUpInboxMessage(cut, intermediateStatus, "R1");
+    setUpInboxMessage(cut, Status.ERROR, "R2");
+    setUpInboxMessage(cut, intermediateStatus, "R2");
+
+    var actual = cut.findAllProcessingRelevant();
+
+    assertThat(actual).isEmpty();
+  }
+
   @Test
   void findNextProcessingRelevantReturnEmptyWhenInCompletedState() {
     var cut = new InboxMessageRepository(configuration);
@@ -213,15 +234,22 @@ class InboxMessageRepositoryTest extends AbstractDatabaseTest {
     assertThat(actual).isEmpty();
   }
 
-  @Test
-  void findNextProcessingRelevantReturnEmptyWhenInInProgressState() {
+  @ParameterizedTest
+  @EnumSource(
+      value = Status.class,
+      names = {"COMPLETED", "ERROR", "NEW"},
+      mode = Mode.EXCLUDE)
+  void findNextProcessingRelevantReturnEmptyWhenInIntermediateStatusAfterTerminalStatus(
+      Status intermediateStatus) {
     var cut = new InboxMessageRepository(configuration);
-    setUpInboxMessage(cut, Status.IN_PROGRESS, "A-1", "A-2");
+    setUpInboxMessage(cut, Status.COMPLETED, "A-1", "A-2");
+    setUpInboxMessage(cut, intermediateStatus, "A-1", "A-2");
     setUpInboxMessage(
         cut,
         Status.NEW,
         "A-1",
-        "A-2"); // this should not be returned as it entered inbox after the previous message
+        "A-2"); // this should not be returned as it entered inbox after the previous message in
+    // intermediate status
 
     var actual = cut.findNextProcessingRelevant(List.of("A-1", "A-2"));
 
@@ -269,7 +297,11 @@ class InboxMessageRepositoryTest extends AbstractDatabaseTest {
         new MessageInsertionRequest(
             "channel-1", new byte[] {65, 66, 67, 68}, Arrays.asList(recipientNames), new byte[0]);
     var message = repository.insert(data);
-    return repository.update(message, status, message.getMetadata(), null);
+    Instant retryAt = null;
+    if (status == Status.RETRY) {
+      retryAt = Instant.now();
+    }
+    return repository.update(message, status, message.getMetadata(), retryAt);
   }
 
   private static MessageInsertionRequest builderMessageInsertionRequest() {
