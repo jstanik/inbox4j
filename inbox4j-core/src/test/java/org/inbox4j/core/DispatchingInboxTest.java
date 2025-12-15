@@ -26,12 +26,16 @@ import io.opentelemetry.context.Scope;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
+import java.util.stream.IntStream;
 import org.inbox4j.core.InboxMessage.Status;
 import org.inbox4j.core.InboxMessageChannel.ProcessingSucceeded;
 import org.inbox4j.core.InboxMessageChannel.Retry;
@@ -161,6 +165,79 @@ class DispatchingInboxTest extends AbstractDatabaseTest {
     inbox.stop();
   }
 
+  @Test
+  void delegatedProcessing() {
+    DelegatingChannel channel = new DelegatingChannel(CHANNEL);
+    DispatchingInbox inbox =
+        (DispatchingInbox) Inbox.builder(dataSource).addChannel(channel).build();
+    channel.setInbox(inbox);
+
+    Span span =
+        GlobalOpenTelemetry.getTracer(InboxMessageRepositoryTest.class.getName())
+            .spanBuilder("inbox")
+            .setParent(Context.root())
+            .startSpan();
+
+    String expectedTraceId;
+    InboxMessage message;
+    try (Scope ignore = span.makeCurrent()) {
+      expectedTraceId = span.getSpanContext().getTraceId();
+      message = inbox.insert(inboxMessageData("recipient1"));
+    } finally {
+      span.end();
+    }
+
+    assertStatusReached(message.getId(), Status.DELEGATED, inbox, Duration.ofSeconds(10));
+    channel.resumeProcessing();
+    assertStatusReached(message.getId(), Status.COMPLETED, inbox, Duration.ofSeconds(10));
+
+    assertThat(channel.getRecordedTraceId()).isEqualTo(expectedTraceId);
+    inbox.stop();
+  }
+
+  @Test
+  void processLargerAmountOfMessagesForTwoDifferentRecipients2() {
+
+    FlagDrivenChannel channel = new FlagDrivenChannel(CHANNEL);
+
+    DispatchingInbox inbox =
+        (DispatchingInbox)
+            Inbox.builder(dataSource).addChannel(channel).withMaxConcurrency(5).build();
+    channel.setInbox(inbox);
+
+    List<String> recipients = IntStream.rangeClosed(1, 10).mapToObj(v -> "recipient" + v).toList();
+
+    Map<String, List<Long>> messageIdsByRecipient = new HashMap<>();
+    for (int i = 1; i <= 100; i++) {
+      byte flag = 0;
+      if (i % 30 == 0) {
+        flag = 1;
+      } else if (i % 40 == 0) {
+        flag = 2;
+      }
+
+      for (String recipient : recipients) {
+        var request =
+            new MessageInsertionRequest(CHANNEL, new byte[0], recipient, new byte[] {flag});
+
+        messageIdsByRecipient
+            .computeIfAbsent(recipient, k -> new ArrayList<>())
+            .add(inbox.insert(request).getId());
+      }
+    }
+
+    messageIdsByRecipient.values().stream()
+        .map(list -> list.get(list.size() - 1))
+        .forEach(
+            messageId ->
+                assertStatusReached(messageId, Status.COMPLETED, inbox, Duration.ofSeconds(60)));
+
+    for (String recipient : recipients) {
+      assertThat(channel.getRecordedIds().get(recipient))
+          .containsExactlyElementsOf(messageIdsByRecipient.get(recipient));
+    }
+  }
+
   private static void assertStatusReached(
       long id, Status expectedStatus, DispatchingInbox inbox, Duration timeout) {
     long tryUntil = Instant.now().toEpochMilli() + timeout.toMillis();
@@ -169,6 +246,12 @@ class DispatchingInboxTest extends AbstractDatabaseTest {
       var message = inbox.load(id);
       if (expectedStatus.equals(message.getStatus())) {
         return;
+      }
+      try {
+        Thread.sleep(20);
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        throw new RuntimeException(e);
       }
     }
 
@@ -198,7 +281,7 @@ class DispatchingInboxTest extends AbstractDatabaseTest {
     }
 
     @Override
-    public ProcessingResult processMessage(InboxMessage message, ProcessingContext context) {
+    public ProcessingResult processMessage(InboxMessage message) {
       String recipientName = message.getRecipientNames().stream().findFirst().orElseThrow();
 
       InboxMessageContext inboxMessageContext =
@@ -264,8 +347,99 @@ class DispatchingInboxTest extends AbstractDatabaseTest {
     }
 
     @Override
-    public ProcessingFailed processMessage(InboxMessage message, ProcessingContext context) {
+    public ProcessingFailed processMessage(InboxMessage message) {
       return new ProcessingFailed(message, new RuntimeException("Processing failed"));
+    }
+  }
+
+  private class DelegatingChannel implements InboxMessageChannel {
+    private final String name;
+    private Inbox inbox;
+    private String recordedTraceId;
+    private final CountDownLatch latch = new CountDownLatch(1);
+
+    public DelegatingChannel(String name) {
+      this.name = name;
+    }
+
+    public void setInbox(Inbox inbox) {
+      this.inbox = inbox;
+    }
+
+    @Override
+    public String getName() {
+      return name;
+    }
+
+    public String getRecordedTraceId() {
+      return recordedTraceId;
+    }
+
+    @Override
+    public ProcessingResult processMessage(InboxMessage message) {
+      return new Delegate(
+          message,
+          (m, reference) -> {
+            try {
+              if (!latch.await(10, TimeUnit.SECONDS)) {
+                throw new RuntimeException("No rendezvous for recipient " + message);
+              }
+            } catch (InterruptedException e) {
+              Thread.currentThread().interrupt();
+              throw new RuntimeException(e);
+            }
+            recordedTraceId = Span.current().getSpanContext().getTraceId();
+            inbox.complete(reference, true);
+          });
+    }
+
+    public void resumeProcessing() {
+      latch.countDown();
+    }
+  }
+
+  static class FlagDrivenChannel implements InboxMessageChannel {
+    private final String name;
+    private Inbox inbox;
+    private Map<String, List<Long>> recordedIds = new ConcurrentHashMap<>();
+
+    public FlagDrivenChannel(String name) {
+      this.name = name;
+    }
+
+    public void setInbox(Inbox inbox) {
+      this.inbox = inbox;
+    }
+
+    @Override
+    public String getName() {
+      return name;
+    }
+
+    public Map<String, List<Long>> getRecordedIds() {
+      return recordedIds;
+    }
+
+    @Override
+    public ProcessingResult processMessage(InboxMessage message) {
+      byte[] metadata = message.getMetadata();
+      String recipient = message.getRecipientNames().stream().findFirst().orElse(null);
+      List<Long> ids = recordedIds.computeIfAbsent(recipient, k -> new ArrayList<>());
+
+      return switch (metadata[0]) {
+        case 0x01 -> new Retry(message, new byte[] {0}, Duration.ofMillis(100));
+        case 0x02 ->
+            new Delegate(
+                message,
+                (m, reference) -> {
+                  ids.add(message.getId());
+                  inbox.complete(reference, true);
+                });
+        default -> {
+          ids.add(message.getId());
+          yield new ProcessingSucceeded(message);
+        }
+      };
     }
   }
 }

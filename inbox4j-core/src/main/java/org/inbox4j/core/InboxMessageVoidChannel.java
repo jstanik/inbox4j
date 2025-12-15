@@ -26,14 +26,13 @@ public interface InboxMessageVoidChannel extends InboxMessageChannel {
    * Processes the inbox message.
    *
    * @param message the message to process.
-   * @param context the processing context
    */
-  void processMessageWithoutResult(InboxMessage message, ProcessingContext context);
+  void processMessageWithoutResult(InboxMessage message);
 
   @Override
-  default ProcessingResult processMessage(InboxMessage message, ProcessingContext context) {
+  default ProcessingResult processMessage(InboxMessage message) {
     try {
-      processMessageWithoutResult(message, context);
+      processMessageWithoutResult(message);
       return new ProcessingSucceeded(message);
     } catch (Exception e) {
       return new ProcessingFailed(message, e);

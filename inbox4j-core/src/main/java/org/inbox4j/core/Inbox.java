@@ -52,4 +52,12 @@ public interface Inbox {
    * @return the loaded message
    */
   InboxMessage load(long id);
+
+  /**
+   * Completes the delegated processing of an inbox message.
+   *
+   * @param delegationReference the reference to the delegation
+   * @param success flag signaling success or failure of the operation
+   */
+  void complete(DelegationReference delegationReference, boolean success);
 }
