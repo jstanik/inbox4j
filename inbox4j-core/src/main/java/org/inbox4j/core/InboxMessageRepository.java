@@ -398,7 +398,7 @@ class InboxMessageRepository {
             + """
               FROM $$inbox_message$$ message
               JOIN $$inbox_message_recipient$$ recipient ON recipient.inbox_message_fk = message.id
-             WHERE message.status NOT IN ('COMPLETED', 'ERROR')
+             WHERE message.status <> 'COMPLETED'
              ORDER BY message.id ASC
             """;
 
@@ -407,7 +407,7 @@ class InboxMessageRepository {
             + """
               FROM $$inbox_message$$ message
               JOIN $$inbox_message_recipient$$ recipient ON recipient.inbox_message_fk = message.id
-             WHERE message.status NOT IN ('COMPLETED', 'ERROR')
+             WHERE message.status <> 'COMPLETED'
                AND recipient.name IN ($$name_placeholders$$)
              ORDER BY message.id ASC
             """;

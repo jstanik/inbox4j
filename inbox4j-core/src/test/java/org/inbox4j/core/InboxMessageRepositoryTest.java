@@ -187,7 +187,7 @@ class InboxMessageRepositoryTest extends AbstractDatabaseTest {
   }
 
   @Test
-  void findAllProcessingRelevant() {
+  void findAllProcessingRelevant_returnsOnlyFirstAfterCompletedIfItsInNewStatus() {
     var cut = new InboxMessageRepository(configuration);
     setUpInboxMessage(cut, Status.COMPLETED, "A-1", "A-2");
     var messageA = setUpInboxMessage(cut, Status.NEW, "A-1", "A-2");
@@ -197,27 +197,27 @@ class InboxMessageRepositoryTest extends AbstractDatabaseTest {
     setUpInboxMessage(cut, Status.IN_PROGRESS, "B-2");
     setUpInboxMessage(cut, Status.NEW, "B-1", "B-2");
     setUpInboxMessage(cut, Status.ERROR, "C-1", "C-2");
-    var messageC = setUpInboxMessage(cut, Status.NEW, "C-1", "C-3");
+    setUpInboxMessage(cut, Status.NEW, "C-1", "C-3");
+    setUpInboxMessage(cut, Status.COMPLETED, "D-1", "D-2");
+    setUpInboxMessage(cut, Status.RETRY, "D-2");
+    setUpInboxMessage(cut, Status.COMPLETED, "E-1", "E-2");
+    setUpInboxMessage(cut, Status.DELEGATED, "E-2");
 
     var actual = cut.findAllProcessingRelevant();
 
-    assertThat(actual)
-        .extracting(InboxMessageView::id)
-        .containsExactly(messageA.getId(), messageC.getId());
+    assertThat(actual).extracting(InboxMessageView::id).containsExactly(messageA.getId());
   }
 
   @ParameterizedTest
   @EnumSource(
       value = Status.class,
-      names = {"COMPLETED", "ERROR", "NEW"},
+      names = {"COMPLETED", "NEW"},
       mode = Mode.EXCLUDE)
-  void findAllProcessingRelevantFindsNothingIfIntermediateStatusAfterTerminalStatus(
+  void findAllProcessingRelevantFindsNothingIfNonCompleteStatusAfterTerminalStatus(
       Status intermediateStatus) {
     var cut = new InboxMessageRepository(configuration);
     setUpInboxMessage(cut, Status.COMPLETED, "R1");
     setUpInboxMessage(cut, intermediateStatus, "R1");
-    setUpInboxMessage(cut, Status.ERROR, "R2");
-    setUpInboxMessage(cut, intermediateStatus, "R2");
 
     var actual = cut.findAllProcessingRelevant();
 
@@ -237,9 +237,9 @@ class InboxMessageRepositoryTest extends AbstractDatabaseTest {
   @ParameterizedTest
   @EnumSource(
       value = Status.class,
-      names = {"COMPLETED", "ERROR", "NEW"},
+      names = {"COMPLETED", "NEW"},
       mode = Mode.EXCLUDE)
-  void findNextProcessingRelevantReturnEmptyWhenInIntermediateStatusAfterTerminalStatus(
+  void findNextProcessingRelevantReturnEmptyWhenInNonCompleteStatusAfterCompleteStatus(
       Status intermediateStatus) {
     var cut = new InboxMessageRepository(configuration);
     setUpInboxMessage(cut, Status.COMPLETED, "A-1", "A-2");
@@ -260,7 +260,6 @@ class InboxMessageRepositoryTest extends AbstractDatabaseTest {
   void findNextProcessingRelevantReturnFirstInNewState() {
     var cut = new InboxMessageRepository(configuration);
     setUpInboxMessage(cut, Status.COMPLETED, "A-1", "A-2");
-    setUpInboxMessage(cut, Status.ERROR, "A-1", "A-2");
     setUpInboxMessage(cut, Status.COMPLETED, "A-1", "A-2");
     var expectedMessage = setUpInboxMessage(cut, Status.NEW, "A-1", "A-2", "A-3");
     setUpInboxMessage(
