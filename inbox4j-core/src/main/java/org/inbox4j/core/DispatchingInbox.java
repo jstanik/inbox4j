@@ -31,9 +31,9 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import org.inbox4j.core.DelegationReferenceIssuer.IdVersion;
 import org.inbox4j.core.InboxMessage.Status;
-import org.inbox4j.core.InboxMessageChannel.ProcessingFailed;
-import org.inbox4j.core.InboxMessageChannel.ProcessingSucceeded;
-import org.inbox4j.core.InboxMessageChannel.Retry;
+import org.inbox4j.core.InboxMessageChannel.ProcessingFailedResult;
+import org.inbox4j.core.InboxMessageChannel.ProcessingSucceededResult;
+import org.inbox4j.core.InboxMessageChannel.RetryResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -253,14 +253,14 @@ class DispatchingInbox implements Inbox {
           processingResult.getClass().getSimpleName());
       InboxMessage updatedMessage;
 
-      if (processingResult instanceof ProcessingSucceeded succeeded) {
-        updatedMessage = handleProcessingSucceeded(succeeded);
-      } else if (processingResult instanceof ProcessingFailed failed) {
-        updatedMessage = handleProcessingFailed(failed);
-      } else if (processingResult instanceof Retry retry) {
-        updatedMessage = handleRetryRequested(retry);
-      } else if (processingResult instanceof Delegate delegate) {
-        updatedMessage = handleDelegateRequested(delegate);
+      if (processingResult instanceof ProcessingSucceededResult succeededResult) {
+        updatedMessage = handleProcessingSucceeded(succeededResult);
+      } else if (processingResult instanceof ProcessingFailedResult failedResult) {
+        updatedMessage = handleProcessingFailed(failedResult);
+      } else if (processingResult instanceof RetryResult retryResult) {
+        updatedMessage = handleRetryResult(retryResult);
+      } else if (processingResult instanceof DelegateResult delegateResult) {
+        updatedMessage = handleDelegateResult(delegateResult);
       } else {
         throw new UnsupportedOperationException(
             "Result type" + processingResult.getClass().getName() + " not supported yet!");
@@ -293,22 +293,23 @@ class DispatchingInbox implements Inbox {
     }
   }
 
-  private InboxMessage handleProcessingSucceeded(ProcessingSucceeded succeeded) {
+  private InboxMessage handleProcessingSucceeded(ProcessingSucceededResult succeeded) {
     return repository.update(
         succeeded.inboxMessage, Status.COMPLETED, succeeded.getMetadata(), null);
   }
 
-  private InboxMessage handleProcessingFailed(ProcessingFailed failed) {
+  private InboxMessage handleProcessingFailed(ProcessingFailedResult failed) {
     return repository.update(failed.inboxMessage, Status.ERROR, failed.getMetadata(), null);
   }
 
-  private InboxMessage handleRetryRequested(Retry retry) {
+  private InboxMessage handleRetryResult(RetryResult retryResult) {
     var currentInstant = instantSource.instant();
-    var retryAt = currentInstant.plus(retry.getDelay());
+    var retryAt = currentInstant.plus(retryResult.getDelay());
 
     var updatedMessage =
-        repository.update(retry.inboxMessage, Status.RETRY, retry.getMetadata(), retryAt);
-    scheduleRetry(updatedMessage.getId(), retry.getDelay());
+        repository.update(
+            retryResult.inboxMessage, Status.RETRY, retryResult.getMetadata(), retryAt);
+    scheduleRetry(updatedMessage.getId(), retryResult.getDelay());
     return updatedMessage;
   }
 
@@ -323,14 +324,15 @@ class DispatchingInbox implements Inbox {
     }
   }
 
-  private InboxMessage handleDelegateRequested(Delegate delegate) {
+  private InboxMessage handleDelegateResult(DelegateResult delegateResult) {
     var updatedMessage =
-        repository.update(delegate.inboxMessage, Status.DELEGATED, delegate.getMetadata(), null);
+        repository.update(
+            delegateResult.inboxMessage, Status.DELEGATED, delegateResult.getMetadata(), null);
 
     execute(
         () -> {
           var delegationReference = delegationReferenceIssuer.issueReference(updatedMessage);
-          delegate.getDelegatingCallback().delegate(updatedMessage, delegationReference);
+          delegateResult.getDelegatingCallback().delegate(updatedMessage, delegationReference);
         },
         updatedMessage.getTraceContext());
 

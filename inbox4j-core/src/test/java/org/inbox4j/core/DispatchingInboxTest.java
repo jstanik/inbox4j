@@ -37,8 +37,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 import java.util.stream.IntStream;
 import org.inbox4j.core.InboxMessage.Status;
-import org.inbox4j.core.InboxMessageChannel.ProcessingSucceeded;
-import org.inbox4j.core.InboxMessageChannel.Retry;
+import org.inbox4j.core.InboxMessageChannel.ProcessingSucceededResult;
+import org.inbox4j.core.InboxMessageChannel.RetryResult;
 import org.inbox4j.core.InboxMessageRepository.Configuration;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -89,7 +89,7 @@ class DispatchingInboxTest extends AbstractDatabaseTest {
     InboxMessage message = inbox.insert(inboxMessageData("recipient1"));
 
     Duration retryDelay = Duration.ofMillis(100);
-    var context = channel.awaitProcessing("recipient1", m -> new Retry(m, retryDelay));
+    var context = channel.awaitProcessing("recipient1", m -> new RetryResult(m, retryDelay));
     assertStatusReached(context.message.getId(), Status.RETRY, inbox, Duration.ofSeconds(10));
     var retryMessage = inbox.load(message.getId());
     assertThat(retryMessage.getRetryAt()).isEqualTo(instantSource.instant().plus(retryDelay));
@@ -99,7 +99,7 @@ class DispatchingInboxTest extends AbstractDatabaseTest {
         .schedule(runnableCaptor.capture(), eq(retryDelay.toMillis()), eq(TimeUnit.MILLISECONDS));
     var retryAction = runnableCaptor.getValue();
     retryAction.run();
-    context = channel.awaitProcessing("recipient1", ProcessingSucceeded::new);
+    context = channel.awaitProcessing("recipient1", ProcessingSucceededResult::new);
     assertStatusReached(context.message.getId(), Status.COMPLETED, inbox, Duration.ofSeconds(10));
     inbox.stop();
   }
@@ -196,7 +196,7 @@ class DispatchingInboxTest extends AbstractDatabaseTest {
   }
 
   @Test
-  void processLargerAmountOfMessagesForTwoDifferentRecipients2() {
+  void processLargerAmountOfMessagesForTwoDifferentRecipients() {
 
     FlagDrivenChannel channel = new FlagDrivenChannel(CHANNEL);
 
@@ -292,12 +292,12 @@ class DispatchingInboxTest extends AbstractDatabaseTest {
       secondRendezvous(recipientName, false);
 
       var resultProvider =
-          resultProviders.computeIfAbsent(recipientName, key -> ProcessingSucceeded::new);
+          resultProviders.computeIfAbsent(recipientName, key -> ProcessingSucceededResult::new);
       return resultProvider.apply(message);
     }
 
     InboxMessageContext awaitProcessing(String recipientName) {
-      return awaitProcessing(recipientName, ProcessingSucceeded::new);
+      return awaitProcessing(recipientName, ProcessingSucceededResult::new);
     }
 
     InboxMessageContext awaitProcessing(
@@ -347,8 +347,8 @@ class DispatchingInboxTest extends AbstractDatabaseTest {
     }
 
     @Override
-    public ProcessingFailed processMessage(InboxMessage message) {
-      return new ProcessingFailed(message, new RuntimeException("Processing failed"));
+    public ProcessingFailedResult processMessage(InboxMessage message) {
+      return new ProcessingFailedResult(message, new RuntimeException("Processing failed"));
     }
   }
 
@@ -377,7 +377,7 @@ class DispatchingInboxTest extends AbstractDatabaseTest {
 
     @Override
     public ProcessingResult processMessage(InboxMessage message) {
-      return new Delegate(
+      return new DelegateResult(
           message,
           (m, reference) -> {
             try {
@@ -401,7 +401,7 @@ class DispatchingInboxTest extends AbstractDatabaseTest {
   static class FlagDrivenChannel implements InboxMessageChannel {
     private final String name;
     private Inbox inbox;
-    private Map<String, List<Long>> recordedIds = new ConcurrentHashMap<>();
+    private final Map<String, List<Long>> recordedIds = new ConcurrentHashMap<>();
 
     public FlagDrivenChannel(String name) {
       this.name = name;
@@ -427,9 +427,9 @@ class DispatchingInboxTest extends AbstractDatabaseTest {
       List<Long> ids = recordedIds.computeIfAbsent(recipient, k -> new ArrayList<>());
 
       return switch (metadata[0]) {
-        case 0x01 -> new Retry(message, new byte[] {0}, Duration.ofMillis(100));
+        case 0x01 -> new RetryResult(message, new byte[] {0}, Duration.ofMillis(100));
         case 0x02 ->
-            new Delegate(
+            new DelegateResult(
                 message,
                 (m, reference) -> {
                   ids.add(message.getId());
@@ -437,7 +437,7 @@ class DispatchingInboxTest extends AbstractDatabaseTest {
                 });
         default -> {
           ids.add(message.getId());
-          yield new ProcessingSucceeded(message);
+          yield new ProcessingSucceededResult(message);
         }
       };
     }

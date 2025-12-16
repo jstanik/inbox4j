@@ -37,30 +37,31 @@ public interface InboxMessageChannel {
 
   /** The result of the inbox message processing. */
   sealed interface ProcessingResult
-      permits Delegate, ProcessingFailed, ProcessingSucceeded, Retry {}
+      permits DelegateResult, ProcessingFailedResult, ProcessingSucceededResult, RetryResult {}
 
   /** A successful result. */
-  final class ProcessingSucceeded extends AbstractProcessingResult implements ProcessingResult {
+  final class ProcessingSucceededResult extends AbstractProcessingResult
+      implements ProcessingResult {
 
-    public ProcessingSucceeded(InboxMessage inboxMessage) {
+    public ProcessingSucceededResult(InboxMessage inboxMessage) {
       super(inboxMessage);
     }
 
-    public ProcessingSucceeded(InboxMessage inboxMessage, byte[] metadata) {
+    public ProcessingSucceededResult(InboxMessage inboxMessage, byte[] metadata) {
       super(inboxMessage, metadata);
     }
   }
 
   /** A failed result. */
-  final class ProcessingFailed extends AbstractProcessingResult implements ProcessingResult {
+  final class ProcessingFailedResult extends AbstractProcessingResult implements ProcessingResult {
 
     private final Throwable error;
 
-    public ProcessingFailed(InboxMessage inboxMessage, Throwable error) {
+    public ProcessingFailedResult(InboxMessage inboxMessage, Throwable error) {
       this(inboxMessage, inboxMessage.getMetadata(), error);
     }
 
-    public ProcessingFailed(InboxMessage inboxMessage, byte[] metadata, Throwable error) {
+    public ProcessingFailedResult(InboxMessage inboxMessage, byte[] metadata, Throwable error) {
       super(inboxMessage, metadata);
       this.error = error;
     }
@@ -81,7 +82,7 @@ public interface InboxMessageChannel {
    * exact timing of the retry. Retry requests are handled on a best-effort basis with respect to
    * the requested delay.
    */
-  final class Retry extends AbstractProcessingResult implements ProcessingResult {
+  final class RetryResult extends AbstractProcessingResult implements ProcessingResult {
 
     private final Duration delay;
 
@@ -91,7 +92,7 @@ public interface InboxMessageChannel {
      * @param inboxMessage the inbox message
      * @param delay the retry delay
      */
-    public Retry(InboxMessage inboxMessage, Duration delay) {
+    public RetryResult(InboxMessage inboxMessage, Duration delay) {
       this(inboxMessage, inboxMessage.getMetadata(), delay);
     }
 
@@ -102,7 +103,7 @@ public interface InboxMessageChannel {
      * @param metadata the new metadata to attach to the inbox message
      * @param delay the retry delay
      */
-    public Retry(InboxMessage inboxMessage, byte[] metadata, Duration delay) {
+    public RetryResult(InboxMessage inboxMessage, byte[] metadata, Duration delay) {
       super(inboxMessage, metadata);
       if (delay.isNegative()) {
         throw new IllegalArgumentException("delay cannot be negative");

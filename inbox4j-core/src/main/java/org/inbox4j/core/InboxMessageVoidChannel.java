@@ -33,9 +33,9 @@ public interface InboxMessageVoidChannel extends InboxMessageChannel {
   default ProcessingResult processMessage(InboxMessage message) {
     try {
       processMessageWithoutResult(message);
-      return new ProcessingSucceeded(message);
+      return new ProcessingSucceededResult(message);
     } catch (Exception e) {
-      return new ProcessingFailed(message, e);
+      return new ProcessingFailedResult(message, e);
     }
   }
 }

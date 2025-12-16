@@ -15,15 +15,15 @@ package org.inbox4j.core;
 
 import org.inbox4j.core.InboxMessageChannel.ProcessingResult;
 
-public final class Delegate extends AbstractProcessingResult implements ProcessingResult {
+public final class DelegateResult extends AbstractProcessingResult implements ProcessingResult {
 
   private final DelegatingCallback delegatingCallback;
 
-  public Delegate(InboxMessage inboxMessage, DelegatingCallback delegatingCallback) {
+  public DelegateResult(InboxMessage inboxMessage, DelegatingCallback delegatingCallback) {
     this(inboxMessage, delegatingCallback, inboxMessage.getMetadata());
   }
 
-  public Delegate(
+  public DelegateResult(
       InboxMessage inboxMessage, DelegatingCallback delegatingCallback, byte[] metadata) {
     super(inboxMessage, metadata);
     this.delegatingCallback = delegatingCallback;
