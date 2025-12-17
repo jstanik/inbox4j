@@ -202,7 +202,7 @@ class DispatchingInboxTest extends AbstractDatabaseTest {
 
     DispatchingInbox inbox =
         (DispatchingInbox)
-            Inbox.builder(dataSource).addChannel(channel).withMaxConcurrency(5).build();
+            Inbox.builder(dataSource).addChannel(channel).withMaxConcurrency(4).build();
     channel.setInbox(inbox);
 
     List<String> recipients = IntStream.rangeClosed(1, 10).mapToObj(v -> "recipient" + v).toList();
@@ -236,6 +236,7 @@ class DispatchingInboxTest extends AbstractDatabaseTest {
       assertThat(channel.getRecordedIds().get(recipient))
           .containsExactlyElementsOf(messageIdsByRecipient.get(recipient));
     }
+    inbox.stop();
   }
 
   private static void assertStatusReached(
@@ -425,6 +426,10 @@ class DispatchingInboxTest extends AbstractDatabaseTest {
       byte[] metadata = message.getMetadata();
       String recipient = message.getRecipientNames().stream().findFirst().orElse(null);
       List<Long> ids = recordedIds.computeIfAbsent(recipient, k -> new ArrayList<>());
+
+      if (metadata == null) {
+        throw new IllegalStateException("No metadata in message " + message);
+      }
 
       return switch (metadata[0]) {
         case 0x01 -> new RetryResult(message, new byte[] {0}, Duration.ofMillis(100));

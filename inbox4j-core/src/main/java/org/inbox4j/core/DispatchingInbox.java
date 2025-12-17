@@ -148,6 +148,7 @@ class DispatchingInbox implements Inbox {
     } catch (InterruptedException interruptedException) {
       Thread.currentThread().interrupt();
     }
+    LOGGER.debug("Quiting dispatch loop");
   }
 
   private void processNextEvent() throws InterruptedException {
@@ -194,18 +195,20 @@ class DispatchingInbox implements Inbox {
   }
 
   private void markAsInProgressAndDispatch(InboxMessage inboxMessage) {
+    InboxMessage updatedMessage;
     try {
-      inboxMessage =
+      updatedMessage =
           repository.update(inboxMessage, Status.IN_PROGRESS, inboxMessage.getMetadata(), null);
-      parallelCount++;
-      LOGGER.debug("Parallel count increased: {}", parallelCount);
-      dispatch(inboxMessage);
     } catch (StaleDataUpdateException staleDataUpdateException) {
       LOGGER.debug(
           "Failed to change status of the message {} to {} due to stale data.",
           inboxMessage.getId(),
           Status.IN_PROGRESS);
+      return;
     }
+    parallelCount++;
+    LOGGER.debug("Parallel count increased: {}", parallelCount);
+    dispatch(updatedMessage);
   }
 
   private void loadWaitingRecipients() {
