@@ -17,10 +17,6 @@ abstract class AbstractProcessingResult {
   protected final InboxMessage inboxMessage;
   protected final byte[] metadata;
 
-  protected AbstractProcessingResult(InboxMessage inboxMessage) {
-    this(inboxMessage, inboxMessage.getMetadata());
-  }
-
   protected AbstractProcessingResult(InboxMessage inboxMessage, byte[] metadata) {
     this.inboxMessage = inboxMessage;
     this.metadata = metadata;

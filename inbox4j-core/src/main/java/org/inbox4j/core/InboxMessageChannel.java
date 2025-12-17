@@ -44,7 +44,7 @@ public interface InboxMessageChannel {
       implements ProcessingResult {
 
     public ProcessingSucceededResult(InboxMessage inboxMessage) {
-      super(inboxMessage);
+      this(inboxMessage, inboxMessage.getMetadata());
     }
 
     public ProcessingSucceededResult(InboxMessage inboxMessage, byte[] metadata) {
