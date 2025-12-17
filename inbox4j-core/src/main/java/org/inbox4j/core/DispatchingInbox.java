@@ -32,6 +32,7 @@ import java.util.concurrent.TimeUnit;
 import org.inbox4j.core.DelegationReferenceIssuer.IdVersion;
 import org.inbox4j.core.InboxMessage.Status;
 import org.inbox4j.core.InboxMessageChannel.ProcessingFailedResult;
+import org.inbox4j.core.InboxMessageChannel.ProcessingResult;
 import org.inbox4j.core.InboxMessageChannel.ProcessingSucceededResult;
 import org.inbox4j.core.InboxMessageChannel.RetryResult;
 import org.slf4j.Logger;
@@ -47,7 +48,7 @@ class DispatchingInbox implements Inbox {
   private final OtelPlugin otelPlugin;
   private final ExecutorService executorService;
   private final ScheduledExecutorService retryScheduler;
-  private final Thread dispatchLoopThread;
+  private final Thread eventLoopThread;
   private final InstantSource instantSource;
 
   private final Deque<Recipient> recipientsToCheck = new LinkedList<>();
@@ -74,13 +75,11 @@ class DispatchingInbox implements Inbox {
     this.maxConcurrency = validateMaxConcurrency(maxConcurrency);
     this.instantSource = instantSource;
 
-    this.dispatchLoopThread =
+    this.eventLoopThread =
         new Thread(
-            Thread.currentThread().getThreadGroup(),
-            this::dispatchLoop,
-            "inbox-message-dispatch-loop");
-    this.dispatchLoopThread.setDaemon(true);
-    this.dispatchLoopThread.start();
+            Thread.currentThread().getThreadGroup(), this::eventLoop, "inbox-message-event-loop");
+    this.eventLoopThread.setDaemon(true);
+    this.eventLoopThread.start();
   }
 
   private static int validateMaxConcurrency(int maxConcurrency) {
@@ -130,7 +129,7 @@ class DispatchingInbox implements Inbox {
     putEvent(new DelegationCompleted(updatedMessage));
   }
 
-  private void dispatchLoop() {
+  private void eventLoop() {
     scheduleRetries();
     loadWaitingRecipients();
     try {
@@ -182,7 +181,7 @@ class DispatchingInbox implements Inbox {
           .filter(message -> message.getStatus().equals(Status.NEW))
           .orElse(null);
     } else {
-      throw new IllegalStateException("Nothing to fetch!");
+      throw new IllegalStateException("Trying to fetch inbox message but no input available.");
     }
   }
 
@@ -248,7 +247,12 @@ class DispatchingInbox implements Inbox {
     return () -> {
       LOGGER.debug(
           "Dispatching InboxMessage{id={}} to the channel: {}", message.getId(), channel.getName());
-      var processingResult = channel.processMessage(message);
+      ProcessingResult processingResult;
+      try {
+        processingResult = channel.processMessage(message);
+      } catch (Exception exception) {
+        processingResult = new ProcessingFailedResult(message, exception);
+      }
       LOGGER.debug(
           "Channel {} finished processing the InboxMessage{id={}} with the result: {}",
           channel.getName(),
@@ -302,6 +306,11 @@ class DispatchingInbox implements Inbox {
   }
 
   private InboxMessage handleProcessingFailed(ProcessingFailedResult failed) {
+    LOGGER
+        .atError()
+        .setCause(failed.getError())
+        .addArgument(failed.inboxMessage::getId)
+        .log("InboxMessage{id={}} processing failed");
     return repository.update(failed.inboxMessage, Status.ERROR, failed.getMetadata(), null);
   }
 
@@ -343,12 +352,12 @@ class DispatchingInbox implements Inbox {
   }
 
   void stop() {
-    dispatchLoopThread.interrupt();
+    eventLoopThread.interrupt();
     executorService.shutdown();
     retryScheduler.shutdown();
 
     try {
-      dispatchLoopThread.join(5000);
+      eventLoopThread.join(5000);
     } catch (InterruptedException interruptedException) {
       Thread.currentThread().interrupt();
     }

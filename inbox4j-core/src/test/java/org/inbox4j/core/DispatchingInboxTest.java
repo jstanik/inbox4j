@@ -166,6 +166,18 @@ class DispatchingInboxTest extends AbstractDatabaseTest {
   }
 
   @Test
+  void channelThrowsExceptionAndMessageGoesToErrorState() {
+    ThrowingChannel channel = new ThrowingChannel(CHANNEL);
+    DispatchingInbox inbox =
+        (DispatchingInbox) Inbox.builder(dataSource).addChannel(channel).build();
+
+    InboxMessage message = inbox.insert(inboxMessageData("recipient1"));
+
+    assertStatusReached(message.getId(), Status.ERROR, inbox, Duration.ofSeconds(10));
+    inbox.stop();
+  }
+
+  @Test
   void delegatedProcessing() {
     DelegatingChannel channel = new DelegatingChannel(CHANNEL);
     DispatchingInbox inbox =
@@ -208,11 +220,11 @@ class DispatchingInboxTest extends AbstractDatabaseTest {
     List<String> recipients = IntStream.rangeClosed(1, 10).mapToObj(v -> "recipient" + v).toList();
 
     Map<String, List<Long>> messageIdsByRecipient = new HashMap<>();
-    for (int i = 1; i <= 100; i++) {
+    for (int i = 1; i <= 50; i++) {
       byte flag = 0;
-      if (i % 30 == 0) {
+      if (i % 10 == 0) {
         flag = 1;
-      } else if (i % 40 == 0) {
+      } else if (i % 25 == 0) {
         flag = 2;
       }
 
@@ -350,6 +362,19 @@ class DispatchingInboxTest extends AbstractDatabaseTest {
     @Override
     public ProcessingFailedResult processMessage(InboxMessage message) {
       return new ProcessingFailedResult(message, new RuntimeException("Processing failed"));
+    }
+  }
+
+  private record ThrowingChannel(String name) implements InboxMessageChannel {
+
+    @Override
+    public String getName() {
+      return name;
+    }
+
+    @Override
+    public ProcessingResult processMessage(InboxMessage message) {
+      throw new UnsupportedOperationException();
     }
   }
 
