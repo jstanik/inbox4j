@@ -74,6 +74,15 @@ public interface InboxMessageChannel {
     public Throwable getError() {
       return this.error;
     }
+
+    @Override
+    public String toString() {
+      return "ProcessingFailedResult{inboxMessageId="
+          + getInboxMessage().getId()
+          + ", recipientNames="
+          + getInboxMessage().getRecipientNames()
+          + "}";
+    }
   }
 
   /**

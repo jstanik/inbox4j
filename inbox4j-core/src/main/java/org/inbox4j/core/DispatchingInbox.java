@@ -86,6 +86,7 @@ class DispatchingInbox implements Inbox {
     if (maxConcurrency <= 0) {
       throw new IllegalArgumentException("maxConcurrency must be > 0");
     }
+    LOGGER.debug("Configuring maxConcurrency = {}", maxConcurrency);
     return maxConcurrency;
   }
 
@@ -130,6 +131,8 @@ class DispatchingInbox implements Inbox {
   }
 
   private void eventLoop() {
+    LOGGER.debug("Starting event loop");
+
     scheduleRetries();
     loadWaitingRecipients();
     try {
@@ -151,13 +154,13 @@ class DispatchingInbox implements Inbox {
   }
 
   private void processNextEvent() throws InterruptedException {
-    LOGGER.atDebug().addArgument(events::size).log("Event Queue size: {}");
     Event event = events.take();
-    LOGGER.debug("Event received: {}", event);
+    LOGGER.debug("Taking event {} out of the event queue for processing", event);
 
     if (event instanceof ProcessingTerminated) {
       parallelCount--;
-      LOGGER.debug("Parallel count decreased: {}", parallelCount);
+      LOGGER.debug(
+          "The event {} decrements the parallel count to the value {}", event, parallelCount);
     }
 
     if (event instanceof RetryFired retry) {
@@ -181,11 +184,12 @@ class DispatchingInbox implements Inbox {
           .filter(message -> message.getStatus().equals(Status.NEW))
           .orElse(null);
     } else {
-      throw new IllegalStateException("Trying to fetch inbox message but no input available.");
+      throw new IllegalStateException("Trying to fetch inbox message but no input available");
     }
   }
 
   private void putEvent(Event event) {
+    LOGGER.debug("Putting event {} to the event queue", event);
     try {
       events.put(event);
     } catch (InterruptedException e) {
@@ -194,15 +198,22 @@ class DispatchingInbox implements Inbox {
   }
 
   private void markAsInProgressAndDispatch(InboxMessage inboxMessage) {
+    LOGGER
+        .atDebug()
+        .addArgument(inboxMessage::getId)
+        .addArgument(inboxMessage::getRecipientNames)
+        .log("Dispatching inbox message {id={}, recipientNames={}}");
     InboxMessage updatedMessage;
     try {
       updatedMessage =
           repository.update(inboxMessage, Status.IN_PROGRESS, inboxMessage.getMetadata(), null);
     } catch (StaleDataUpdateException staleDataUpdateException) {
-      LOGGER.debug(
-          "Failed to change status of the message {} to {} due to stale data.",
-          inboxMessage.getId(),
-          Status.IN_PROGRESS);
+      LOGGER
+          .atDebug()
+          .addArgument(inboxMessage::getId)
+          .log(
+              "Dispatching interrupted because inbox message {id={}} has been modified in the"
+                  + " meantime");
       return;
     }
     parallelCount++;
@@ -246,7 +257,10 @@ class DispatchingInbox implements Inbox {
     var channel = resolveChannel(message);
     return () -> {
       LOGGER.debug(
-          "Dispatching InboxMessage{id={}} to the channel: {}", message.getId(), channel.getName());
+          "Inbox message {id={}, recipientNames={}} dispatched to the channel '{}'",
+          message.getId(),
+          message.getRecipientNames(),
+          channel.getName());
       ProcessingResult processingResult;
       try {
         processingResult = channel.processMessage(message);
@@ -254,12 +268,11 @@ class DispatchingInbox implements Inbox {
         processingResult = new ProcessingFailedResult(message, exception);
       }
       LOGGER.debug(
-          "Channel {} finished processing the InboxMessage{id={}} with the result: {}",
+          "Channel '{}' finished processing and returned result {}",
           channel.getName(),
-          message.getId(),
-          processingResult.getClass().getSimpleName());
-      InboxMessage updatedMessage;
+          processingResult);
 
+      InboxMessage updatedMessage;
       if (processingResult instanceof ProcessingSucceededResult succeededResult) {
         updatedMessage = handleProcessingSucceeded(succeededResult);
       } else if (processingResult instanceof ProcessingFailedResult failedResult) {
@@ -366,6 +379,17 @@ class DispatchingInbox implements Inbox {
   private sealed interface Event {
 
     Recipient getRecipient();
+
+    InboxMessage message();
+
+    default String asString() {
+      return getClass().getSimpleName()
+          + "{inboxMessageId="
+          + message().getId()
+          + ", recipientNames="
+          + message().getRecipientNames()
+          + "}";
+    }
   }
 
   private record InboxMessageInserted(InboxMessage message) implements Event {
@@ -374,13 +398,22 @@ class DispatchingInbox implements Inbox {
     public Recipient getRecipient() {
       return new Recipient(message.getRecipientNames());
     }
+
+    @Override
+    public String toString() {
+      return asString();
+    }
   }
 
   private record ProcessingTerminated(InboxMessage message) implements Event {
 
-    @Override
     public Recipient getRecipient() {
       return new Recipient(message.getRecipientNames());
+    }
+
+    @Override
+    public String toString() {
+      return asString();
     }
   }
 
@@ -390,12 +423,22 @@ class DispatchingInbox implements Inbox {
     public Recipient getRecipient() {
       return new Recipient(message.getRecipientNames());
     }
+
+    @Override
+    public String toString() {
+      return asString();
+    }
   }
 
   private record RetryFired(InboxMessage message) implements Event {
     @Override
     public Recipient getRecipient() {
       return new Recipient(message.getRecipientNames());
+    }
+
+    @Override
+    public String toString() {
+      return asString();
     }
   }
 }

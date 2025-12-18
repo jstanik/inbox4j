@@ -29,4 +29,14 @@ abstract class AbstractProcessingResult {
   public byte[] getMetadata() {
     return this.metadata;
   }
+
+  @Override
+  public String toString() {
+    return getClass().getSimpleName()
+        + "{inboxMessageId="
+        + getInboxMessage().getId()
+        + ", recipientNames="
+        + getInboxMessage().getRecipientNames()
+        + "}";
+  }
 }
