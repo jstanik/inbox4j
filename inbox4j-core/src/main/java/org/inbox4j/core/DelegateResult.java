@@ -15,14 +15,34 @@ package org.inbox4j.core;
 
 import org.inbox4j.core.InboxMessageChannel.ProcessingResult;
 
+/**
+ * A result indicating that the message processing should ot continue inline. Instead, the caller is
+ * expected to delegate the processing of the inbox message to the callback contained in this
+ * result.
+ */
 public final class DelegateResult extends AbstractProcessingResult implements ProcessingResult {
 
   private final DelegatingCallback delegatingCallback;
 
+  /**
+   * Construct a {@code DelegateResult} that requests the delegation of the given inbox message to
+   * the supplied callback.
+   *
+   * @param inboxMessage the inbox message whose processing is to be delegated
+   * @param delegatingCallback the callback to which processing should be delegated
+   */
   public DelegateResult(InboxMessage inboxMessage, DelegatingCallback delegatingCallback) {
     this(inboxMessage, delegatingCallback, inboxMessage.getMetadata());
   }
 
+  /**
+   * Construct a {@code DelegateResult} that requests the delegation of the given inbox message to
+   * the supplied callback.
+   *
+   * @param inboxMessage the inbox message whose processing is to be delegated
+   * @param delegatingCallback the callback to which processing should be delegated
+   * @param metadata the metadata to store in the inbox message before invoking the callback
+   */
   public DelegateResult(
       InboxMessage inboxMessage, DelegatingCallback delegatingCallback, byte[] metadata) {
     super(inboxMessage, metadata);

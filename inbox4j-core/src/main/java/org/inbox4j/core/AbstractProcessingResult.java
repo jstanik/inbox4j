@@ -14,8 +14,8 @@
 package org.inbox4j.core;
 
 abstract class AbstractProcessingResult {
-  protected final InboxMessage inboxMessage;
-  protected final byte[] metadata;
+  private final InboxMessage inboxMessage;
+  private final byte[] metadata;
 
   protected AbstractProcessingResult(InboxMessage inboxMessage, byte[] metadata) {
     this.inboxMessage = inboxMessage;

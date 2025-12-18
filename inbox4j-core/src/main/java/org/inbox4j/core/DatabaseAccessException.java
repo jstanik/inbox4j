@@ -13,6 +13,7 @@
  */
 package org.inbox4j.core;
 
+/** Exception indicating a failure during database access or interaction. */
 public class DatabaseAccessException extends RuntimeException {
 
   public DatabaseAccessException(String message, Throwable cause) {

@@ -13,6 +13,7 @@
  */
 package org.inbox4j.core;
 
+/** Exception indicating a violation of data integrity constraints during a database operation. */
 public class DataIntegrityViolationException extends DatabaseAccessException {
 
   public DataIntegrityViolationException(String message, Throwable cause) {

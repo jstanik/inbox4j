@@ -43,6 +43,7 @@ public interface InboxMessage {
 
   String getTraceContext();
 
+  /** The status of the inbox message. */
   enum Status {
     NEW,
     IN_PROGRESS,

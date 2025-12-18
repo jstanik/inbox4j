@@ -302,16 +302,16 @@ class DispatchingInbox implements Inbox {
 
   private InboxMessage handleProcessingSucceeded(ProcessingSucceededResult succeeded) {
     return repository.update(
-        succeeded.inboxMessage, Status.COMPLETED, succeeded.getMetadata(), null);
+        succeeded.getInboxMessage(), Status.COMPLETED, succeeded.getMetadata(), null);
   }
 
   private InboxMessage handleProcessingFailed(ProcessingFailedResult failed) {
     LOGGER
         .atError()
         .setCause(failed.getError())
-        .addArgument(failed.inboxMessage::getId)
+        .addArgument(failed.getInboxMessage()::getId)
         .log("InboxMessage{id={}} processing failed");
-    return repository.update(failed.inboxMessage, Status.ERROR, failed.getMetadata(), null);
+    return repository.update(failed.getInboxMessage(), Status.ERROR, failed.getMetadata(), null);
   }
 
   private InboxMessage handleRetryResult(RetryResult retryResult) {
@@ -320,7 +320,7 @@ class DispatchingInbox implements Inbox {
 
     var updatedMessage =
         repository.update(
-            retryResult.inboxMessage, Status.RETRY, retryResult.getMetadata(), retryAt);
+            retryResult.getInboxMessage(), Status.RETRY, retryResult.getMetadata(), retryAt);
     scheduleRetry(updatedMessage.getId(), retryResult.getDelay());
     return updatedMessage;
   }
@@ -339,7 +339,7 @@ class DispatchingInbox implements Inbox {
   private InboxMessage handleDelegateResult(DelegateResult delegateResult) {
     var updatedMessage =
         repository.update(
-            delegateResult.inboxMessage, Status.DELEGATED, delegateResult.getMetadata(), null);
+            delegateResult.getInboxMessage(), Status.DELEGATED, delegateResult.getMetadata(), null);
 
     execute(
         () -> {
