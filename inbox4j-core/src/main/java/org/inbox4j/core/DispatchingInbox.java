@@ -29,6 +29,7 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 import org.inbox4j.core.DelegationReferenceIssuer.IdVersion;
 import org.inbox4j.core.InboxMessage.Status;
 import org.inbox4j.core.InboxMessageChannel.ProcessingFailedResult;
@@ -126,8 +127,11 @@ class DispatchingInbox implements Inbox {
     } else {
       status = Status.ERROR;
     }
-    var updatedMessage = repository.update(message, status, message.getMetadata(), null);
-    putEvent(new DelegationCompleted(updatedMessage));
+
+    var maybeUpdatedMessage =
+        tryUpdate(message).status(status).metadata(message.getMetadata()).retryAt(null).execute();
+
+    putEvent(new DelegationCompleted(maybeUpdatedMessage));
   }
 
   private void eventLoop() {
@@ -314,8 +318,11 @@ class DispatchingInbox implements Inbox {
   }
 
   private InboxMessage handleProcessingSucceeded(ProcessingSucceededResult succeeded) {
-    return repository.update(
-        succeeded.getInboxMessage(), Status.COMPLETED, succeeded.getMetadata(), null);
+    return tryUpdate(succeeded.getInboxMessage())
+        .status(Status.COMPLETED)
+        .metadata(succeeded.getMetadata())
+        .retryAt(null)
+        .execute();
   }
 
   private InboxMessage handleProcessingFailed(ProcessingFailedResult failed) {
@@ -324,18 +331,27 @@ class DispatchingInbox implements Inbox {
         .setCause(failed.getError())
         .addArgument(failed.getInboxMessage()::getId)
         .log("InboxMessage{id={}} processing failed");
-    return repository.update(failed.getInboxMessage(), Status.ERROR, failed.getMetadata(), null);
+
+    return tryUpdate(failed.getInboxMessage())
+        .status(Status.ERROR)
+        .metadata(failed.getMetadata())
+        .retryAt(null)
+        .execute();
   }
 
   private InboxMessage handleRetryResult(RetryResult retryResult) {
     var currentInstant = instantSource.instant();
     var retryAt = currentInstant.plus(retryResult.getDelay());
 
-    var updatedMessage =
-        repository.update(
-            retryResult.getInboxMessage(), Status.RETRY, retryResult.getMetadata(), retryAt);
-    scheduleRetry(updatedMessage.getId(), retryResult.getDelay());
-    return updatedMessage;
+    return tryUpdate(retryResult.getInboxMessage())
+        .status(Status.RETRY)
+        .metadata(retryResult.getMetadata())
+        .retryAt(retryAt)
+        .execute(updatedMessage -> scheduleRetry(updatedMessage.getId(), retryResult.getDelay()));
+  }
+
+  private UpdateStatusSpec tryUpdate(InboxMessage inboxMessage) {
+    return new UpdateBuilder(inboxMessage);
   }
 
   private void scheduleRetry(long messageId, Duration delay) {
@@ -350,18 +366,21 @@ class DispatchingInbox implements Inbox {
   }
 
   private InboxMessage handleDelegateResult(DelegateResult delegateResult) {
-    var updatedMessage =
-        repository.update(
-            delegateResult.getInboxMessage(), Status.DELEGATED, delegateResult.getMetadata(), null);
-
-    execute(
-        () -> {
-          var delegationReference = delegationReferenceIssuer.issueReference(updatedMessage);
-          delegateResult.getDelegatingCallback().delegate(updatedMessage, delegationReference);
-        },
-        updatedMessage.getTraceContext());
-
-    return updatedMessage;
+    return tryUpdate(delegateResult.getInboxMessage())
+        .status(Status.DELEGATED)
+        .metadata(delegateResult.getMetadata())
+        .retryAt(null)
+        .execute(
+            updatedMessage ->
+                execute(
+                    () -> {
+                      var delegationReference =
+                          delegationReferenceIssuer.issueReference(updatedMessage);
+                      delegateResult
+                          .getDelegatingCallback()
+                          .delegate(updatedMessage, delegationReference);
+                    },
+                    updatedMessage.getTraceContext()));
   }
 
   void stop() {
@@ -439,6 +458,71 @@ class DispatchingInbox implements Inbox {
     @Override
     public String toString() {
       return asString();
+    }
+  }
+
+  private interface UpdateStatusSpec {
+    UpdateMetadataSpec status(Status status);
+  }
+
+  private interface UpdateMetadataSpec {
+    UpdateRetryAtSpec metadata(byte[] metadata);
+  }
+
+  private interface UpdateExecutor {
+    InboxMessage execute();
+
+    InboxMessage execute(Consumer<InboxMessage> postUpdateAction);
+  }
+
+  private interface UpdateRetryAtSpec extends UpdateExecutor {
+    UpdateExecutor retryAt(Instant retryAt);
+  }
+
+  private class UpdateBuilder implements UpdateStatusSpec, UpdateMetadataSpec, UpdateRetryAtSpec {
+
+    private InboxMessage inboxMessage;
+    private Status status;
+    private byte[] metadata;
+    private Instant retryAt;
+
+    UpdateBuilder(InboxMessage inboxMessage) {
+      this.inboxMessage = inboxMessage;
+    }
+
+    @Override
+    public UpdateRetryAtSpec metadata(byte[] metadata) {
+      this.metadata = metadata;
+      return this;
+    }
+
+    @Override
+    public UpdateExecutor retryAt(Instant retryAt) {
+      this.retryAt = retryAt;
+      return this;
+    }
+
+    @Override
+    public UpdateMetadataSpec status(Status status) {
+      this.status = status;
+      return this;
+    }
+
+    @Override
+    public InboxMessage execute() {
+      return execute(m -> {});
+    }
+
+    @Override
+    public InboxMessage execute(Consumer<InboxMessage> postUpdate) {
+      try {
+        var updatedMessage = repository.update(inboxMessage, status, metadata, retryAt);
+        postUpdate.accept(updatedMessage);
+        return updatedMessage;
+      } catch (Exception exception) {
+        LOGGER.error("Update of InboxMessage{id={}} failed", inboxMessage.getId(), exception);
+        return inboxMessage;
+      }
     }
   }
 }
