@@ -98,16 +98,21 @@ final class TransactionTemplate {
     }
   }
 
-  private static DatabaseAccessException translateException(Exception exception) {
+  private static RuntimeException translateException(Exception exception) {
     if (exception instanceof DatabaseAccessException databaseAccessException) {
       throw databaseAccessException;
     }
-    if (exception instanceof SQLException sqlException
-        && isDataIntegrityViolationException(sqlException)) {
-      return new DataIntegrityViolationException(sqlException.getMessage(), sqlException);
+    if (exception instanceof SQLException sqlException) {
+      if (isDataIntegrityViolationException(sqlException)) {
+        return new DataIntegrityViolationException(sqlException.getMessage(), sqlException);
+      }
+      return new DatabaseAccessException("Database access error", exception);
     }
-
-    return new DatabaseAccessException("Database access error", exception);
+    if (exception instanceof RuntimeException runtimeException) {
+      return runtimeException;
+    } else {
+      return new IllegalStateException("Unexpected error occurred", exception);
+    }
   }
 
   private static boolean isDataIntegrityViolationException(SQLException sqlException) {

@@ -302,9 +302,8 @@ class InboxMessageRepositoryTest extends AbstractDatabaseTest {
     long messageId = message.getId();
 
     assertThatThrownBy(() -> cut.reset(messageId))
-        .isInstanceOf(DatabaseAccessException.class)
-        .hasRootCauseInstanceOf(IllegalStateException.class)
-        .hasRootCauseMessage(
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage(
             "Reset failed because InboxMessage{id=%d} didn't have ERROR status", message.getId());
   }
 
