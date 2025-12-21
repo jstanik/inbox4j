@@ -14,6 +14,7 @@
 package org.inbox4j.core;
 
 import javax.sql.DataSource;
+import org.inbox4j.core.InboxMessage.Status;
 
 /**
  * An inbox for incoming messages.
@@ -60,4 +61,25 @@ public interface Inbox {
    * @param success flag signaling success or failure of the operation
    */
   void complete(DelegationReference delegationReference, boolean success);
+
+  /**
+   * Resets an inbox message to the {@link Status#NEW} status. Reset is only allowed if the inbox
+   * message is in {@link Status#ERROR} status.
+   *
+   * @param id the identifier of the inbox message to reset
+   * @throws IllegalStateException if the inbox message is not in the {@link Status#ERROR}
+   */
+  void reset(long id);
+
+  /**
+   * Removes the inbox message from the inbox.
+   *
+   * <p>Use this method with care! It removes the inbox message regardless of its {@link Status}.
+   * This method is intended to be used primarily for messages which ended in {@link Status#ERROR}
+   * status by mistake or are incorrect, and by being in the {@link Status#ERROR} they block
+   * processing of other messages for the same recipient.
+   *
+   * @param id the identifier of the inbox message to remove
+   */
+  void remove(long id);
 }

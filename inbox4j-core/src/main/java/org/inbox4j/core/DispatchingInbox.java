@@ -134,6 +134,16 @@ class DispatchingInbox implements Inbox {
     putEvent(new DelegationCompleted(maybeUpdatedMessage));
   }
 
+  @Override
+  public void reset(long id) {
+    repository.reset(id);
+  }
+
+  @Override
+  public void remove(long id) {
+    repository.delete(id);
+  }
+
   private void eventLoop() {
     LOGGER.debug("Starting event loop");
 
@@ -481,7 +491,7 @@ class DispatchingInbox implements Inbox {
 
   private class UpdateBuilder implements UpdateStatusSpec, UpdateMetadataSpec, UpdateRetryAtSpec {
 
-    private InboxMessage inboxMessage;
+    private final InboxMessage inboxMessage;
     private Status status;
     private byte[] metadata;
     private Instant retryAt;

@@ -15,6 +15,7 @@ package org.inbox4j.core;
 
 import static java.util.Objects.requireNonNull;
 import static org.inbox4j.core.TransactionTemplate.transaction;
+import static org.inbox4j.core.TransactionTemplate.transactionWithoutResult;
 
 import java.sql.Connection;
 import java.sql.ResultSet;
@@ -192,6 +193,42 @@ class InboxMessageRepository {
         });
   }
 
+  /**
+   * Resets the message to the {@link Status#NEW} state.
+   *
+   * @param id the identifier of the inbox message
+   */
+  void reset(long id) {
+    transactionWithoutResult(
+        dataSource,
+        connection -> {
+          int updatedRows;
+          try (var statement = connection.prepareStatement(sqls.getResetErrorToNew())) {
+            Instant currentInstant = instantSource.instant();
+            statement.setString(1, auditLog(currentInstant, "reset to NEW"));
+            statement.setLong(2, id);
+            updatedRows = statement.executeUpdate();
+          }
+
+          if (updatedRows == 0) {
+            loadInboxMessageEntity(connection, id); // implicitly verify it exists
+            throw new IllegalStateException(
+                "Reset failed because InboxMessage{id=" + id + "} didn't have ERROR status");
+          }
+        });
+  }
+
+  void delete(long id) {
+    transactionWithoutResult(
+        dataSource,
+        connection -> {
+          try (var statement = connection.prepareStatement(sqls.getDeleteInboxMessage())) {
+            statement.setLong(1, id);
+            statement.executeUpdate();
+          }
+        });
+  }
+
   private long insertInboxMessage(Connection connection, MessageInsertionRequest data)
       throws SQLException {
 
@@ -279,7 +316,7 @@ class InboxMessageRepository {
 
       try (var resultSet = statement.executeQuery()) {
         if (!resultSet.next()) {
-          throw new DatabaseAccessException("Inbox message id=" + id + " not found.");
+          throw new DatabaseAccessException("Inbox message id=" + id + " not found");
         }
 
         InboxMessageEntity.Builder builder = null;
@@ -439,6 +476,19 @@ class InboxMessageRepository {
     private static final String SQL_INSERT_INBOX_MESSAGE_RECIPIENT =
         "INSERT INTO $$inbox_message_recipient$$ (name, inbox_message_fk) VALUES (?, ?)";
 
+    private static final String SQL_RESET_ERROR_TO_NEW =
+        """
+          UPDATE $$inbox_message$$
+             SET status = 'NEW',
+                 version = version + 1,
+                 audit_log = audit_log || '\n' || ?
+           WHERE id = ?
+             AND STATUS = 'ERROR'
+        """;
+
+    private static final String SQL_DELETE_INBOX_MESSAGE =
+        "DELETE FROM $$inbox_message$$ WHERE id = ?";
+
     private static final String PLACEHOLDER_INBOX_MESSAGE = "$$inbox_message$$";
     private static final String PLACEHOLDER_INBOX_MESSAGE_RECIPIENT = "$$inbox_message_recipient$$";
 
@@ -453,6 +503,8 @@ class InboxMessageRepository {
     private final String findForRetry;
     private final String insertInboxMessage;
     private final String insertInboxMessageRecipient;
+    private final String resetErrorToNew;
+    private final String deleteInboxMessage;
 
     Sqls(String tableMessage, String tableRecipient) {
       tableMessage = tableMessage == null ? DEFAULT_TABLE_NAME_INBOX_MESSAGE : tableMessage;
@@ -475,6 +527,10 @@ class InboxMessageRepository {
       this.insertInboxMessageRecipient =
           replaceTablePlaceholders(
               SQL_INSERT_INBOX_MESSAGE_RECIPIENT, tableMessage, tableRecipient);
+      this.resetErrorToNew =
+          replaceTablePlaceholders(SQL_RESET_ERROR_TO_NEW, tableMessage, tableRecipient);
+      this.deleteInboxMessage =
+          replaceTablePlaceholders(SQL_DELETE_INBOX_MESSAGE, tableMessage, tableRecipient);
     }
 
     private static String replaceTablePlaceholders(
@@ -509,6 +565,14 @@ class InboxMessageRepository {
 
     public String getInsertInboxMessageRecipient() {
       return insertInboxMessageRecipient;
+    }
+
+    public String getResetErrorToNew() {
+      return resetErrorToNew;
+    }
+
+    public String getDeleteInboxMessage() {
+      return deleteInboxMessage;
     }
   }
 
