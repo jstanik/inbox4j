@@ -58,18 +58,8 @@ public class InboxBuilder {
     return this;
   }
 
-  InboxBuilder withInternalExecutorService(ScheduledExecutorService executorService) {
-    this.internalExecutorService = executorService;
-    return this;
-  }
-
   public InboxBuilder withMaxConcurrency(int maxConcurrency) {
     this.maxConcurrency = maxConcurrency;
-    return this;
-  }
-
-  InboxBuilder withInstantSource(InstantSource instantSource) {
-    this.instantSource = instantSource;
     return this;
   }
 
@@ -85,6 +75,16 @@ public class InboxBuilder {
 
   public InboxBuilder withRetentionPeriod(Duration retentionPeriod) {
     this.retentionPeriod = retentionPeriod;
+    return this;
+  }
+
+  InboxBuilder withInstantSource(InstantSource instantSource) {
+    this.instantSource = instantSource;
+    return this;
+  }
+
+  InboxBuilder withInternalExecutorService(ScheduledExecutorService executorService) {
+    this.internalExecutorService = executorService;
     return this;
   }
 
