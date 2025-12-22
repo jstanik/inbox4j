@@ -229,6 +229,18 @@ class InboxMessageRepository {
         });
   }
 
+  void deleteInboxMessagesCompletedBefore(Instant completedAt) {
+    transactionWithoutResult(
+        dataSource,
+        connection -> {
+          try (var statement =
+              connection.prepareStatement(sqls.getDeleteInboxMessagesCompletedBefore())) {
+            statement.setTimestamp(1, new Timestamp(completedAt.toEpochMilli()));
+            statement.execute();
+          }
+        });
+  }
+
   private long insertInboxMessage(Connection connection, MessageInsertionRequest data)
       throws SQLException {
 
@@ -489,6 +501,9 @@ class InboxMessageRepository {
     private static final String SQL_DELETE_INBOX_MESSAGE =
         "DELETE FROM $$inbox_message$$ WHERE id = ?";
 
+    private static final String SQL_DELETE_INBOX_MESSAGES_COMPLETED_BEFORE =
+        "DELETE FROM $$inbox_message$$ WHERE status = 'COMPLETED' AND updated_at < ?";
+
     private static final String PLACEHOLDER_INBOX_MESSAGE = "$$inbox_message$$";
     private static final String PLACEHOLDER_INBOX_MESSAGE_RECIPIENT = "$$inbox_message_recipient$$";
 
@@ -505,6 +520,7 @@ class InboxMessageRepository {
     private final String insertInboxMessageRecipient;
     private final String resetErrorToNew;
     private final String deleteInboxMessage;
+    private final String deleteInboxMessagesCompletedBefore;
 
     Sqls(String tableMessage, String tableRecipient) {
       tableMessage = tableMessage == null ? DEFAULT_TABLE_NAME_INBOX_MESSAGE : tableMessage;
@@ -531,6 +547,9 @@ class InboxMessageRepository {
           replaceTablePlaceholders(SQL_RESET_ERROR_TO_NEW, tableMessage, tableRecipient);
       this.deleteInboxMessage =
           replaceTablePlaceholders(SQL_DELETE_INBOX_MESSAGE, tableMessage, tableRecipient);
+      this.deleteInboxMessagesCompletedBefore =
+          replaceTablePlaceholders(
+              SQL_DELETE_INBOX_MESSAGES_COMPLETED_BEFORE, tableMessage, tableRecipient);
     }
 
     private static String replaceTablePlaceholders(
@@ -573,6 +592,10 @@ class InboxMessageRepository {
 
     public String getDeleteInboxMessage() {
       return deleteInboxMessage;
+    }
+
+    public String getDeleteInboxMessagesCompletedBefore() {
+      return deleteInboxMessagesCompletedBefore;
     }
   }
 

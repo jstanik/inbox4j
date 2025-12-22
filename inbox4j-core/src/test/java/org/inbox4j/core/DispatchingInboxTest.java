@@ -81,7 +81,7 @@ class DispatchingInboxTest extends AbstractDatabaseTest {
     DispatchingInbox inbox =
         (DispatchingInbox)
             Inbox.builder(dataSource)
-                .withRetryScheduler(retryExecutor)
+                .withInternalExecutorService(retryExecutor)
                 .withInstantSource(instantSource)
                 .addChannel(channel)
                 .build();
@@ -120,6 +120,22 @@ class DispatchingInboxTest extends AbstractDatabaseTest {
     DispatchingInbox inbox =
         (DispatchingInbox)
             Inbox.builder(dataSource).withInstantSource(instantSource).addChannel(channel).build();
+
+    channel.awaitProcessing(recipientName);
+    assertStatusReached(message.getId(), Status.COMPLETED, inbox, Duration.ofSeconds(10));
+
+    inbox.stop();
+  }
+
+  @Test
+  void inboxDispatchingNewFoundInDatabase() {
+    InboxMessageRepository repo = new InboxMessageRepository(new Configuration(dataSource));
+    var recipientName = "recipient1";
+    var message = repo.insert(new MessageInsertionRequest(CHANNEL, new byte[0], recipientName));
+
+    TestChannel channel = new TestChannel(CHANNEL);
+    DispatchingInbox inbox =
+        (DispatchingInbox) Inbox.builder(dataSource).addChannel(channel).build();
 
     channel.awaitProcessing(recipientName);
     assertStatusReached(message.getId(), Status.COMPLETED, inbox, Duration.ofSeconds(10));

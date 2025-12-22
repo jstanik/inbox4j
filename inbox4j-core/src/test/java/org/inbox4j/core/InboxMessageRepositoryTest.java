@@ -17,6 +17,7 @@ import static java.time.temporal.ChronoUnit.MILLIS;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 
 import io.opentelemetry.api.GlobalOpenTelemetry;
 import io.opentelemetry.api.trace.Span;
@@ -317,6 +318,28 @@ class InboxMessageRepositoryTest extends AbstractDatabaseTest {
     assertThatThrownBy(() -> cut.load(messageId))
         .isInstanceOf(DatabaseAccessException.class)
         .hasMessage("Inbox message id=%s not found", messageId);
+  }
+
+  @Test
+  void deleteInboxMessagesCompletedBefore() {
+    Instant instant1 = instantSource.instant();
+    InboxMessageRepository cut = new InboxMessageRepository(configuration);
+    var message1IdCompleted = setUpInboxMessage(cut, Status.COMPLETED, "name").getId();
+    var message2IdInProgress = setUpInboxMessage(cut, Status.IN_PROGRESS, "name").getId();
+    var instant2 = instant1.plusMillis(1);
+    instantSource.setInstant(instant2);
+    var message3IdCompleted = setUpInboxMessage(cut, Status.COMPLETED, "name").getId();
+
+    cut.deleteInboxMessagesCompletedBefore(instant2);
+
+    assertDoesNotThrow(
+        () -> {
+          cut.load(message2IdInProgress);
+          cut.load(message3IdCompleted);
+        });
+    assertThatThrownBy(() -> cut.load(message1IdCompleted))
+        .isInstanceOf(DatabaseAccessException.class)
+        .hasMessage("Inbox message id=%s not found", message1IdCompleted);
   }
 
   @Test

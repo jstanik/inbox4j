@@ -15,12 +15,12 @@ package org.inbox4j.core;
 
 import static java.util.Objects.requireNonNull;
 
+import java.time.Duration;
 import java.time.InstantSource;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import javax.sql.DataSource;
 import org.inbox4j.core.InboxMessageRepository.Configuration;
@@ -32,11 +32,12 @@ public class InboxBuilder {
   private final DataSource dataSource;
   private final List<InboxMessageChannel> channels = new ArrayList<>();
   private ExecutorService executorService;
-  private ScheduledExecutorService retryScheduler;
+  private ScheduledExecutorService internalExecutorService;
   private int maxConcurrency = Integer.MAX_VALUE;
   private InstantSource instantSource = InstantSource.system();
   private String tableInboxMessage;
   private String tableInboxMessageRecipient;
+  private Duration retentionPeriod = Duration.ofDays(7);
 
   public InboxBuilder(DataSource dataSource) {
     this.dataSource = requireNonNull(dataSource);
@@ -57,8 +58,8 @@ public class InboxBuilder {
     return this;
   }
 
-  public InboxBuilder withRetryScheduler(ScheduledExecutorService retryScheduler) {
-    this.retryScheduler = retryScheduler;
+  InboxBuilder withInternalExecutorService(ScheduledExecutorService executorService) {
+    this.internalExecutorService = executorService;
     return this;
   }
 
@@ -82,6 +83,11 @@ public class InboxBuilder {
     return this;
   }
 
+  public InboxBuilder withRetentionPeriod(Duration retentionPeriod) {
+    this.retentionPeriod = retentionPeriod;
+    return this;
+  }
+
   public Inbox build() {
     var repository =
         new InboxMessageRepository(
@@ -91,22 +97,14 @@ public class InboxBuilder {
                 .withTableInboxMessage(tableInboxMessage)
                 .withTableInboxMessageRecipient(tableInboxMessageRecipient));
 
-    ExecutorService configuredExecutorService = executorService;
-    if (configuredExecutorService == null) {
-      configuredExecutorService = Executors.newCachedThreadPool();
-    }
-
-    ScheduledExecutorService configuredRetryScheduler = retryScheduler;
-    if (configuredRetryScheduler == null) {
-      configuredRetryScheduler = Executors.newSingleThreadScheduledExecutor();
-    }
     return new DispatchingInbox(
         repository,
         channels,
-        configuredExecutorService,
-        configuredRetryScheduler,
+        executorService,
+        internalExecutorService,
         OTEL_PLUGIN,
         maxConcurrency,
+        retentionPeriod,
         instantSource);
   }
 }

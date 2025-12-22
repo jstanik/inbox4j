@@ -27,6 +27,7 @@ import java.util.Map;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
@@ -43,12 +44,14 @@ class DispatchingInbox implements Inbox {
 
   private static final Logger LOGGER = LoggerFactory.getLogger(DispatchingInbox.class);
 
+  private static final Duration MINIMAL_RETENTION_PERIOD = Duration.ofHours(1);
+
   private final InboxMessageRepository repository;
   private final Map<String, InboxMessageChannel> channels;
   private final int maxConcurrency;
   private final OtelPlugin otelPlugin;
   private final ExecutorService executorService;
-  private final ScheduledExecutorService retryScheduler;
+  private final ScheduledExecutorService internalExecutorService;
   private final Thread eventLoopThread;
   private final InstantSource instantSource;
 
@@ -63,15 +66,16 @@ class DispatchingInbox implements Inbox {
       InboxMessageRepository inboxMessageRepository,
       Collection<InboxMessageChannel> channels,
       ExecutorService executorService,
-      ScheduledExecutorService retryScheduler,
+      ScheduledExecutorService internalExecutorService,
       OtelPlugin otelPlugin,
       int maxConcurrency,
+      Duration retentionPeriod,
       InstantSource instantSource) {
     this.repository = inboxMessageRepository;
     this.channels =
         Map.copyOf(channels.stream().collect(toMap(InboxMessageChannel::getName, identity())));
-    this.executorService = executorService;
-    this.retryScheduler = retryScheduler;
+    this.executorService = ensureExecutorService(executorService);
+    this.internalExecutorService = ensureInternalExecutorService(internalExecutorService);
     this.otelPlugin = otelPlugin;
     this.maxConcurrency = validateMaxConcurrency(maxConcurrency);
     this.instantSource = instantSource;
@@ -81,6 +85,8 @@ class DispatchingInbox implements Inbox {
             Thread.currentThread().getThreadGroup(), this::eventLoop, "inbox-message-event-loop");
     this.eventLoopThread.setDaemon(true);
     this.eventLoopThread.start();
+
+    initializeRetention(retentionPeriod);
   }
 
   private static int validateMaxConcurrency(int maxConcurrency) {
@@ -89,6 +95,30 @@ class DispatchingInbox implements Inbox {
     }
     LOGGER.debug("Configuring maxConcurrency = {}", maxConcurrency);
     return maxConcurrency;
+  }
+
+  private static void validateRetentionPeriod(Duration retentionPeriod) {
+    if (retentionPeriod.compareTo(MINIMAL_RETENTION_PERIOD) < 0) {
+      throw new IllegalArgumentException("timeRetention must be >= " + MINIMAL_RETENTION_PERIOD);
+    }
+  }
+
+  private static ExecutorService ensureExecutorService(ExecutorService executorService) {
+    return executorService != null ? executorService : Executors.newCachedThreadPool();
+  }
+
+  private static ScheduledExecutorService ensureInternalExecutorService(
+      ScheduledExecutorService executorService) {
+    return executorService != null ? executorService : Executors.newSingleThreadScheduledExecutor();
+  }
+
+  private void initializeRetention(Duration timeRetention) {
+    validateRetentionPeriod(timeRetention);
+    Duration defaultCheckPeriod = Duration.ofDays(1);
+    Duration checkPeriod =
+        timeRetention.compareTo(defaultCheckPeriod) < 0 ? timeRetention : defaultCheckPeriod;
+    internalExecutorService.scheduleAtFixedRate(
+        this::cleanup, 0, checkPeriod.toMillis(), TimeUnit.MILLISECONDS);
   }
 
   @Override
@@ -146,9 +176,7 @@ class DispatchingInbox implements Inbox {
 
   private void eventLoop() {
     LOGGER.debug("Starting event loop");
-
-    scheduleRetries();
-    loadWaitingRecipients();
+    initializeEventLoop();
     try {
       while (!Thread.currentThread().isInterrupted()) {
         processNextEvent();
@@ -167,20 +195,32 @@ class DispatchingInbox implements Inbox {
     LOGGER.debug("Quiting dispatch loop");
   }
 
+  private void initializeEventLoop() {
+    scheduleRetries();
+    loadWaitingRecipients();
+    putEvent(new InitializationCompletedEvent());
+  }
+
   private void processNextEvent() throws InterruptedException {
     Event event = events.take();
     LOGGER.debug("Taking event {} out of the event queue for processing", event);
 
-    if (event instanceof ProcessingTerminated) {
+    if (event instanceof InitializationCompletedEvent) {
+      return;
+    }
+
+    var inboxMessageEvent = (InboxMessageEvent) event;
+
+    if (inboxMessageEvent instanceof ProcessingTerminated) {
       parallelCount--;
       LOGGER.debug(
           "The event {} decrements the parallel count to the value {}", event, parallelCount);
     }
 
-    if (event instanceof RetryFired retry) {
+    if (inboxMessageEvent instanceof RetryFired retry) {
       retryRequests.add(retry);
     } else {
-      recipientsToCheck.add(event.getRecipient());
+      recipientsToCheck.add(inboxMessageEvent.getRecipient());
     }
   }
 
@@ -365,7 +405,8 @@ class DispatchingInbox implements Inbox {
   }
 
   private void scheduleRetry(long messageId, Duration delay) {
-    retryScheduler.schedule(() -> fireRetry(messageId), delay.toMillis(), TimeUnit.MILLISECONDS);
+    internalExecutorService.schedule(
+        () -> fireRetry(messageId), delay.toMillis(), TimeUnit.MILLISECONDS);
   }
 
   private void fireRetry(long messageId) {
@@ -393,10 +434,14 @@ class DispatchingInbox implements Inbox {
                     updatedMessage.getTraceContext()));
   }
 
+  void cleanup() {
+    throw new UnsupportedOperationException();
+  }
+
   void stop() {
     eventLoopThread.interrupt();
     executorService.shutdown();
-    retryScheduler.shutdown();
+    internalExecutorService.shutdown();
 
     try {
       eventLoopThread.join(5000);
@@ -405,7 +450,11 @@ class DispatchingInbox implements Inbox {
     }
   }
 
-  private sealed interface Event {
+  private sealed interface Event {}
+
+  private final class InitializationCompletedEvent implements Event {}
+
+  private sealed interface InboxMessageEvent extends Event {
 
     Recipient getRecipient();
 
@@ -421,7 +470,7 @@ class DispatchingInbox implements Inbox {
     }
   }
 
-  private record InboxMessageInserted(InboxMessage message) implements Event {
+  private record InboxMessageInserted(InboxMessage message) implements InboxMessageEvent {
 
     @Override
     public Recipient getRecipient() {
@@ -434,7 +483,7 @@ class DispatchingInbox implements Inbox {
     }
   }
 
-  private record ProcessingTerminated(InboxMessage message) implements Event {
+  private record ProcessingTerminated(InboxMessage message) implements InboxMessageEvent {
 
     public Recipient getRecipient() {
       return new Recipient(message.getRecipientNames());
@@ -446,7 +495,7 @@ class DispatchingInbox implements Inbox {
     }
   }
 
-  private record DelegationCompleted(InboxMessage message) implements Event {
+  private record DelegationCompleted(InboxMessage message) implements InboxMessageEvent {
 
     @Override
     public Recipient getRecipient() {
@@ -459,7 +508,7 @@ class DispatchingInbox implements Inbox {
     }
   }
 
-  private record RetryFired(InboxMessage message) implements Event {
+  private record RetryFired(InboxMessage message) implements InboxMessageEvent {
     @Override
     public Recipient getRecipient() {
       return new Recipient(message.getRecipientNames());
