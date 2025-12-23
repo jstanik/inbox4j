@@ -48,14 +48,12 @@ class DispatchingInbox implements Inbox {
   private final Deque<Recipient> recipientsToCheck = new LinkedList<>();
   private final Deque<RetryTriggered> retryRequests = new LinkedList<>();
   private final BlockingQueue<Event> events = new ArrayBlockingQueue<>(100, true);
-  private final ContinuationReferenceIssuer continuationReferenceIssuer;
   private int parallelCount = 0;
 
   DispatchingInbox(
       InboxMessageRepository inboxMessageRepository,
       Dispatcher dispatcher,
       ContinuationExecutor continuationExecutor,
-      ContinuationReferenceIssuer continuationReferenceIssuer,
       ScheduledExecutorService internalExecutorService,
       int maxConcurrency,
       Duration retentionPeriod,
@@ -63,7 +61,6 @@ class DispatchingInbox implements Inbox {
     this.repository = inboxMessageRepository;
     this.dispatcher = dispatcher;
     this.continuationExecutor = continuationExecutor;
-    this.continuationReferenceIssuer = continuationReferenceIssuer;
     this.internalExecutorService = internalExecutorService;
     this.maxConcurrency = validateMaxConcurrency(maxConcurrency);
     this.instantSource = instantSource;
@@ -118,7 +115,7 @@ class DispatchingInbox implements Inbox {
 
   @Override
   public void complete(ContinuationReference continuationReference, boolean success) {
-    IdVersion idVersion = continuationReferenceIssuer.dereference(continuationReference);
+    IdVersion idVersion = continuationExecutor.dereference(continuationReference);
     InboxMessage message = repository.load(idVersion.id());
     if (message.getVersion() != idVersion.version()) {
       throw new StaleDataUpdateException(

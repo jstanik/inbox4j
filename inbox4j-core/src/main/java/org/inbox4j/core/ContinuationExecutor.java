@@ -15,6 +15,7 @@ package org.inbox4j.core;
 
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
+import org.inbox4j.core.ContinuationReferenceIssuer.IdVersion;
 
 class ContinuationExecutor {
   private final ContinuationReferenceIssuer referenceIssuer;
@@ -42,5 +43,9 @@ class ContinuationExecutor {
                       continuation.start(inboxMessage, continuationReference);
                     }),
         executor);
+  }
+
+  IdVersion dereference(ContinuationReference reference) {
+    return referenceIssuer.dereference(reference);
   }
 }

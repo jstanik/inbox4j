@@ -112,15 +112,14 @@ public class InboxBuilder {
         ensureInternalExecutorService(this.internalExecutorService);
 
     var dispatcher = new Dispatcher(channels, resolvedExecutorService, OTEL_PLUGIN);
-    var continuationReferenceIssuer = new ContinuationReferenceIssuer();
     var continuationExecutor =
-        new ContinuationExecutor(continuationReferenceIssuer, resolvedExecutorService, OTEL_PLUGIN);
+        new ContinuationExecutor(
+            new ContinuationReferenceIssuer(), resolvedExecutorService, OTEL_PLUGIN);
 
     return new DispatchingInbox(
         repository,
         dispatcher,
         continuationExecutor,
-        continuationReferenceIssuer,
         resolvedInternalExecutorService,
         maxConcurrency,
         retentionPeriod,
