@@ -13,17 +13,13 @@
  */
 package org.inbox4j.core;
 
-import static java.util.function.Function.identity;
-import static java.util.stream.Collectors.toMap;
 
 import java.time.Duration;
 import java.time.Instant;
 import java.time.InstantSource;
-import java.util.Collection;
 import java.util.Deque;
 import java.util.LinkedList;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ExecutorService;
@@ -33,7 +29,6 @@ import java.util.concurrent.TimeUnit;
 import org.inbox4j.core.DelegationReferenceIssuer.IdVersion;
 import org.inbox4j.core.InboxMessage.Status;
 import org.inbox4j.core.InboxMessageChannel.ProcessingFailedResult;
-import org.inbox4j.core.InboxMessageChannel.ProcessingResult;
 import org.inbox4j.core.InboxMessageChannel.ProcessingSucceededResult;
 import org.inbox4j.core.InboxMessageChannel.RetryResult;
 import org.slf4j.Logger;
@@ -46,16 +41,17 @@ class DispatchingInbox implements Inbox {
   private static final Duration MINIMAL_RETENTION_PERIOD = Duration.ofHours(1);
 
   private final InboxMessageRepository repository;
-  private final Map<String, InboxMessageChannel> channels;
+  private final Dispatcher dispatcher;
   private final int maxConcurrency;
-  private final OtelPlugin otelPlugin;
-  private final ExecutorService executorService;
   private final ScheduledExecutorService internalExecutorService;
   private final Thread eventLoopThread;
   private final InstantSource instantSource;
 
+  private final ExecutorService executorService;
+  private final OtelPlugin otelPlugin;
+
   private final Deque<Recipient> recipientsToCheck = new LinkedList<>();
-  private final Deque<RetryFired> retryRequests = new LinkedList<>();
+  private final Deque<RetryTriggered> retryRequests = new LinkedList<>();
   private final BlockingQueue<Event> events = new ArrayBlockingQueue<>(100, true);
   private final DelegationReferenceIssuer delegationReferenceIssuer =
       new DelegationReferenceIssuer();
@@ -63,7 +59,7 @@ class DispatchingInbox implements Inbox {
 
   DispatchingInbox(
       InboxMessageRepository inboxMessageRepository,
-      Collection<InboxMessageChannel> channels,
+      Dispatcher dispatcher,
       ExecutorService executorService,
       ScheduledExecutorService internalExecutorService,
       OtelPlugin otelPlugin,
@@ -71,13 +67,12 @@ class DispatchingInbox implements Inbox {
       Duration retentionPeriod,
       InstantSource instantSource) {
     this.repository = inboxMessageRepository;
-    this.channels =
-        Map.copyOf(channels.stream().collect(toMap(InboxMessageChannel::getName, identity())));
-    this.executorService = ensureExecutorService(executorService);
+    this.dispatcher = dispatcher;
     this.internalExecutorService = ensureInternalExecutorService(internalExecutorService);
-    this.otelPlugin = otelPlugin;
+    this.executorService = executorService;
     this.maxConcurrency = validateMaxConcurrency(maxConcurrency);
     this.instantSource = instantSource;
+    this.otelPlugin = otelPlugin;
 
     this.eventLoopThread =
         new Thread(
@@ -102,10 +97,6 @@ class DispatchingInbox implements Inbox {
     }
   }
 
-  private static ExecutorService ensureExecutorService(ExecutorService executorService) {
-    return executorService != null ? executorService : Executors.newCachedThreadPool();
-  }
-
   private static ScheduledExecutorService ensureInternalExecutorService(
       ScheduledExecutorService executorService) {
     return executorService != null ? executorService : Executors.newSingleThreadScheduledExecutor();
@@ -122,7 +113,7 @@ class DispatchingInbox implements Inbox {
 
   @Override
   public InboxMessage insert(MessageInsertionRequest request) {
-    if (channels.get(request.getChannelName()) == null) {
+    if (!dispatcher.isSupported(request.getChannelName())) {
       throw new IllegalArgumentException(
           "No channel with the name '" + request.getChannelName() + "' configured");
     }
@@ -216,7 +207,7 @@ class DispatchingInbox implements Inbox {
           "The event {} decrements the parallel count to the value {}", event, parallelCount);
     }
 
-    if (inboxMessageEvent instanceof RetryFired retry) {
+    if (inboxMessageEvent instanceof RetryTriggered retry) {
       retryRequests.add(retry);
     } else {
       recipientsToCheck.add(inboxMessageEvent.getRecipient());
@@ -298,60 +289,37 @@ class DispatchingInbox implements Inbox {
 
   private void dispatch(InboxMessage message) {
     checkMessageIsInProgress(message);
-    var action = createDispatchingAction(message);
-    execute(action, message.getTraceContext());
+    dispatcher
+        .dispatch(message)
+        .whenComplete(
+            (processingResult, exception) -> {
+              if (exception != null) {
+                processingResult = new ProcessingFailedResult(message, exception);
+              }
+              LOGGER.debug(
+                  "Processing of InboxMessage{id={}} finished with result {}",
+                  message.getId(),
+                  processingResult);
+
+              InboxMessage updatedMessage;
+              if (processingResult instanceof ProcessingSucceededResult succeededResult) {
+                updatedMessage = handleProcessingSucceeded(succeededResult);
+              } else if (processingResult instanceof ProcessingFailedResult failedResult) {
+                updatedMessage = handleProcessingFailed(failedResult);
+              } else if (processingResult instanceof RetryResult retryResult) {
+                updatedMessage = handleRetryResult(retryResult);
+              } else if (processingResult instanceof DelegateResult delegateResult) {
+                updatedMessage = handleDelegateResult(delegateResult);
+              } else {
+                throw new UnsupportedOperationException(
+                    "Result type" + processingResult.getClass().getName() + " not supported yet!");
+              }
+              putEvent(new ProcessingTerminated(updatedMessage));
+            });
   }
 
   private void execute(Runnable runnable, String traceContext) {
     executorService.execute(() -> otelPlugin.getContextInstaller().install(traceContext, runnable));
-  }
-
-  private Runnable createDispatchingAction(InboxMessage message) {
-    var channel = resolveChannel(message);
-    return () -> {
-      LOGGER.debug(
-          "Inbox message {id={}, recipientNames={}} dispatched to the channel '{}'",
-          message.getId(),
-          message.getRecipientNames(),
-          channel.getName());
-      ProcessingResult processingResult;
-      try {
-        processingResult = channel.processMessage(message);
-      } catch (Exception exception) {
-        processingResult = new ProcessingFailedResult(message, exception);
-      }
-      LOGGER.debug(
-          "Channel '{}' finished processing and returned result {}",
-          channel.getName(),
-          processingResult);
-
-      InboxMessage updatedMessage;
-      if (processingResult instanceof ProcessingSucceededResult succeededResult) {
-        updatedMessage = handleProcessingSucceeded(succeededResult);
-      } else if (processingResult instanceof ProcessingFailedResult failedResult) {
-        updatedMessage = handleProcessingFailed(failedResult);
-      } else if (processingResult instanceof RetryResult retryResult) {
-        updatedMessage = handleRetryResult(retryResult);
-      } else if (processingResult instanceof DelegateResult delegateResult) {
-        updatedMessage = handleDelegateResult(delegateResult);
-      } else {
-        throw new UnsupportedOperationException(
-            "Result type" + processingResult.getClass().getName() + " not supported yet!");
-      }
-      putEvent(new ProcessingTerminated(updatedMessage));
-    };
-  }
-
-  private InboxMessageChannel resolveChannel(InboxMessage message) {
-    var channel = channels.get(message.getChannelName());
-    if (channel == null) {
-      throw new IllegalStateException(
-          "InboxMessage{id="
-              + message.getId()
-              + "} refers to non existing channel: "
-              + message.getChannelName());
-    }
-    return channel;
   }
 
   private static void checkMessageIsInProgress(InboxMessage message) {
@@ -405,13 +373,13 @@ class DispatchingInbox implements Inbox {
 
   private void scheduleRetry(long messageId, Duration delay) {
     internalExecutorService.schedule(
-        () -> fireRetry(messageId), delay.toMillis(), TimeUnit.MILLISECONDS);
+        () -> triggerRetry(messageId), delay.toMillis(), TimeUnit.MILLISECONDS);
   }
 
-  private void fireRetry(long messageId) {
+  private void triggerRetry(long messageId) {
     InboxMessage message = repository.load(messageId);
     if (message.getStatus().equals(Status.RETRY)) {
-      putEvent(new RetryFired(message));
+      putEvent(new RetryTriggered(message));
     }
   }
 
@@ -439,7 +407,7 @@ class DispatchingInbox implements Inbox {
 
   void stop() {
     eventLoopThread.interrupt();
-    executorService.shutdown();
+    dispatcher.close();
     internalExecutorService.shutdown();
 
     try {
@@ -507,7 +475,7 @@ class DispatchingInbox implements Inbox {
     }
   }
 
-  private record RetryFired(InboxMessage message) implements InboxMessageEvent {
+  private record RetryTriggered(InboxMessage message) implements InboxMessageEvent {
     @Override
     public Recipient getRecipient() {
       return new Recipient(message.getRecipientNames());

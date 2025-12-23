@@ -28,6 +28,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Supplier;
 
 /**
  * A plugin for Open Telemetry integration. If the plugin detects Open Telemetry on the class path
@@ -75,6 +76,8 @@ class OtelPlugin {
   interface ContextInstaller {
 
     void install(String encodedContext, Runnable action);
+
+    <T> T install(String encodedContext, Supplier<T> supplier);
   }
 
   interface ContextInjector {
@@ -87,6 +90,11 @@ class OtelPlugin {
     @Override
     public void install(String encodedContext, Runnable action) {
       action.run();
+    }
+
+    @Override
+    public <T> T install(String encodedContext, Supplier<T> supplier) {
+      return supplier.get();
     }
   }
 
@@ -101,6 +109,16 @@ class OtelPlugin {
 
     @Override
     public void install(String encodedContext, Runnable action) {
+      install(
+          encodedContext,
+          () -> {
+            action.run();
+            return null;
+          });
+    }
+
+    @Override
+    public <T> T install(String encodedContext, Supplier<T> supplier) {
       Context context =
           propagators.getTextMapPropagator().extract(Context.current(), encodedContext, getter);
 
@@ -111,7 +129,7 @@ class OtelPlugin {
               .startSpan();
 
       try (Scope ignore = span.makeCurrent()) {
-        action.run();
+        return supplier.get();
       } catch (Exception exception) {
         span.recordException(exception);
         span.setStatus(StatusCode.ERROR);

@@ -21,6 +21,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import javax.sql.DataSource;
 import org.inbox4j.core.InboxMessageRepository.Configuration;
@@ -88,6 +89,10 @@ public class InboxBuilder {
     return this;
   }
 
+  private static ExecutorService ensureExecutorService(ExecutorService executorService) {
+    return executorService != null ? executorService : Executors.newCachedThreadPool();
+  }
+
   public Inbox build() {
     var repository =
         new InboxMessageRepository(
@@ -97,10 +102,14 @@ public class InboxBuilder {
                 .withTableInboxMessage(tableInboxMessage)
                 .withTableInboxMessageRecipient(tableInboxMessageRecipient));
 
+    var resolvedExecutorService = ensureExecutorService(this.executorService);
+
+    var dispatcher = new Dispatcher(channels, resolvedExecutorService, OTEL_PLUGIN);
+
     return new DispatchingInbox(
         repository,
-        channels,
-        executorService,
+        dispatcher,
+        resolvedExecutorService,
         internalExecutorService,
         OTEL_PLUGIN,
         maxConcurrency,
