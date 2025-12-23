@@ -16,31 +16,31 @@ package org.inbox4j.core;
 import java.util.Objects;
 
 /**
- * A reference to delegated processing.
+ * A reference to a continuation.
  *
- * <p>This reference uniquely identifies a single delegated processing operation. It must be
- * included when reporting the completion of the delegated processing.
+ * <p>This reference uniquely identifies a single continuation. It must be included when reporting
+ * the completion of the continuation.
  *
  * <p>Use {@link #toString()} to serialize this reference for storage or transmission.
  */
-public final class DelegationReference {
+public final class ContinuationReference {
   private final String value;
 
   /**
-   * Creates a new {@code DelegationReference} from its serialized representation.
+   * Creates a new {@code ContinuationReference} from its serialized representation.
    *
    * <p>The provided value must be a string previously obtained from {@link #toString()}. The
-   * returned instance represents the same delegated processing as the original reference.
+   * returned instance represents the same continuation as the original reference.
    *
-   * @param value the serialized representation of a delegation reference
-   * @return a {@link DelegationReference} corresponding to the given value
+   * @param value the serialized representation of a continuation reference
+   * @return a {@link ContinuationReference} corresponding to the given value
    * @see #toString()
    */
-  public static DelegationReference fromString(String value) {
-    return new DelegationReference(value);
+  public static ContinuationReference fromString(String value) {
+    return new ContinuationReference(value);
   }
 
-  private DelegationReference(String value) {
+  private ContinuationReference(String value) {
     this.value = value;
   }
 
@@ -60,7 +60,7 @@ public final class DelegationReference {
 
   @Override
   public boolean equals(Object o) {
-    if (!(o instanceof DelegationReference that)) return false;
+    if (!(o instanceof ContinuationReference that)) return false;
     return Objects.equals(value, that.value);
   }
 

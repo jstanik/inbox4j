@@ -14,23 +14,23 @@
 package org.inbox4j.core;
 
 /**
- * A callback for initiating delegated processing.
+ * A callback for initiating processing continuation outside the inbox.
  *
  * <p>Implementations of this interface are responsible for executing the asynchronous processing of
  * an inbox message.
  */
-public interface DelegatingCallback {
+public interface Continuation {
 
   /**
-   * Initiates asynchronous delegated processing for the given message.
+   * Initiates asynchronous processing for the given message.
    *
    * <p>This method must return promptly and must not block until the processing has completed.
    * Implementations are responsible for handling all exceptions internally and must report
    * completion (successful or failed) using the provided {@code reference} via the {@link Inbox}
    * interface.
    *
-   * @param message the message the processing of which to delegate
-   * @param reference the reference identifying this delegated processing
+   * @param message the message the processing of which to continue outside inbox
+   * @param reference the reference identifying this continued processing
    */
-  void delegate(InboxMessage message, DelegationReference reference);
+  void start(InboxMessage message, ContinuationReference reference);
 }

@@ -13,7 +13,6 @@
  */
 package org.inbox4j.core;
 
-
 import java.time.Duration;
 import java.time.Instant;
 import java.time.InstantSource;
@@ -22,11 +21,9 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
-import org.inbox4j.core.DelegationReferenceIssuer.IdVersion;
+import org.inbox4j.core.ContinuationReferenceIssuer.IdVersion;
 import org.inbox4j.core.InboxMessage.Status;
 import org.inbox4j.core.InboxMessageChannel.ProcessingFailedResult;
 import org.inbox4j.core.InboxMessageChannel.ProcessingSucceededResult;
@@ -42,37 +39,34 @@ class DispatchingInbox implements Inbox {
 
   private final InboxMessageRepository repository;
   private final Dispatcher dispatcher;
+  private final ContinuationExecutor continuationExecutor;
   private final int maxConcurrency;
   private final ScheduledExecutorService internalExecutorService;
   private final Thread eventLoopThread;
   private final InstantSource instantSource;
 
-  private final ExecutorService executorService;
-  private final OtelPlugin otelPlugin;
-
   private final Deque<Recipient> recipientsToCheck = new LinkedList<>();
   private final Deque<RetryTriggered> retryRequests = new LinkedList<>();
   private final BlockingQueue<Event> events = new ArrayBlockingQueue<>(100, true);
-  private final DelegationReferenceIssuer delegationReferenceIssuer =
-      new DelegationReferenceIssuer();
+  private final ContinuationReferenceIssuer continuationReferenceIssuer;
   private int parallelCount = 0;
 
   DispatchingInbox(
       InboxMessageRepository inboxMessageRepository,
       Dispatcher dispatcher,
-      ExecutorService executorService,
+      ContinuationExecutor continuationExecutor,
+      ContinuationReferenceIssuer continuationReferenceIssuer,
       ScheduledExecutorService internalExecutorService,
-      OtelPlugin otelPlugin,
       int maxConcurrency,
       Duration retentionPeriod,
       InstantSource instantSource) {
     this.repository = inboxMessageRepository;
     this.dispatcher = dispatcher;
-    this.internalExecutorService = ensureInternalExecutorService(internalExecutorService);
-    this.executorService = executorService;
+    this.continuationExecutor = continuationExecutor;
+    this.continuationReferenceIssuer = continuationReferenceIssuer;
+    this.internalExecutorService = internalExecutorService;
     this.maxConcurrency = validateMaxConcurrency(maxConcurrency);
     this.instantSource = instantSource;
-    this.otelPlugin = otelPlugin;
 
     this.eventLoopThread =
         new Thread(
@@ -95,11 +89,6 @@ class DispatchingInbox implements Inbox {
     if (retentionPeriod.compareTo(MINIMAL_RETENTION_PERIOD) < 0) {
       throw new IllegalArgumentException("timeRetention must be >= " + MINIMAL_RETENTION_PERIOD);
     }
-  }
-
-  private static ScheduledExecutorService ensureInternalExecutorService(
-      ScheduledExecutorService executorService) {
-    return executorService != null ? executorService : Executors.newSingleThreadScheduledExecutor();
   }
 
   private void initializeRetention(Duration timeRetention) {
@@ -128,8 +117,8 @@ class DispatchingInbox implements Inbox {
   }
 
   @Override
-  public void complete(DelegationReference delegationReference, boolean success) {
-    IdVersion idVersion = delegationReferenceIssuer.dereference(delegationReference);
+  public void complete(ContinuationReference continuationReference, boolean success) {
+    IdVersion idVersion = continuationReferenceIssuer.dereference(continuationReference);
     InboxMessage message = repository.load(idVersion.id());
     if (message.getVersion() != idVersion.version()) {
       throw new StaleDataUpdateException(
@@ -151,7 +140,7 @@ class DispatchingInbox implements Inbox {
     var maybeUpdatedMessage =
         tryUpdate(message).status(status).metadata(message.getMetadata()).retryAt(null).execute();
 
-    putEvent(new DelegationCompleted(maybeUpdatedMessage));
+    putEvent(new ContinuationCompleted(maybeUpdatedMessage));
   }
 
   @Override
@@ -308,18 +297,14 @@ class DispatchingInbox implements Inbox {
                 updatedMessage = handleProcessingFailed(failedResult);
               } else if (processingResult instanceof RetryResult retryResult) {
                 updatedMessage = handleRetryResult(retryResult);
-              } else if (processingResult instanceof DelegateResult delegateResult) {
-                updatedMessage = handleDelegateResult(delegateResult);
+              } else if (processingResult instanceof ContinuationResult continuationResult) {
+                updatedMessage = handleContinuationResult(continuationResult);
               } else {
                 throw new UnsupportedOperationException(
                     "Result type" + processingResult.getClass().getName() + " not supported yet!");
               }
               putEvent(new ProcessingTerminated(updatedMessage));
             });
-  }
-
-  private void execute(Runnable runnable, String traceContext) {
-    executorService.execute(() -> otelPlugin.getContextInstaller().install(traceContext, runnable));
   }
 
   private static void checkMessageIsInProgress(InboxMessage message) {
@@ -383,22 +368,14 @@ class DispatchingInbox implements Inbox {
     }
   }
 
-  private InboxMessage handleDelegateResult(DelegateResult delegateResult) {
-    return tryUpdate(delegateResult.getInboxMessage())
-        .status(Status.DELEGATED)
-        .metadata(delegateResult.getMetadata())
+  private InboxMessage handleContinuationResult(ContinuationResult continuationResult) {
+    return tryUpdate(continuationResult.getInboxMessage())
+        .status(Status.WAITING_FOR_CONTINUATION)
+        .metadata(continuationResult.getMetadata())
         .retryAt(null)
         .execute(
             updatedMessage ->
-                execute(
-                    () -> {
-                      var delegationReference =
-                          delegationReferenceIssuer.issueReference(updatedMessage);
-                      delegateResult
-                          .getDelegatingCallback()
-                          .delegate(updatedMessage, delegationReference);
-                    },
-                    updatedMessage.getTraceContext()));
+                continuationExecutor.execute(updatedMessage, continuationResult.getContinuation()));
   }
 
   void cleanup() {
@@ -462,7 +439,7 @@ class DispatchingInbox implements Inbox {
     }
   }
 
-  private record DelegationCompleted(InboxMessage message) implements InboxMessageEvent {
+  private record ContinuationCompleted(InboxMessage message) implements InboxMessageEvent {
 
     @Override
     public Recipient getRecipient() {

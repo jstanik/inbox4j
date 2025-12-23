@@ -93,6 +93,11 @@ public class InboxBuilder {
     return executorService != null ? executorService : Executors.newCachedThreadPool();
   }
 
+  private static ScheduledExecutorService ensureInternalExecutorService(
+      ScheduledExecutorService executorService) {
+    return executorService != null ? executorService : Executors.newSingleThreadScheduledExecutor();
+  }
+
   public Inbox build() {
     var repository =
         new InboxMessageRepository(
@@ -103,15 +108,20 @@ public class InboxBuilder {
                 .withTableInboxMessageRecipient(tableInboxMessageRecipient));
 
     var resolvedExecutorService = ensureExecutorService(this.executorService);
+    var resolvedInternalExecutorService =
+        ensureInternalExecutorService(this.internalExecutorService);
 
     var dispatcher = new Dispatcher(channels, resolvedExecutorService, OTEL_PLUGIN);
+    var continuationReferenceIssuer = new ContinuationReferenceIssuer();
+    var continuationExecutor =
+        new ContinuationExecutor(continuationReferenceIssuer, resolvedExecutorService, OTEL_PLUGIN);
 
     return new DispatchingInbox(
         repository,
         dispatcher,
-        resolvedExecutorService,
-        internalExecutorService,
-        OTEL_PLUGIN,
+        continuationExecutor,
+        continuationReferenceIssuer,
+        resolvedInternalExecutorService,
         maxConcurrency,
         retentionPeriod,
         instantSource);

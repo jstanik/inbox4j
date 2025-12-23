@@ -48,7 +48,7 @@ public interface InboxMessage {
     NEW,
     IN_PROGRESS,
     RETRY,
-    DELEGATED,
+    WAITING_FOR_CONTINUATION,
     ERROR,
     COMPLETED;
 

@@ -28,7 +28,7 @@ import javax.crypto.NoSuchPaddingException;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 
-class DelegationReferenceIssuer {
+class ContinuationReferenceIssuer {
 
   private static final SecretKeySpec KEY;
   private static final byte ALGORITHM_VERSION = 1;
@@ -38,9 +38,9 @@ class DelegationReferenceIssuer {
     try {
       MessageDigest sha256 = MessageDigest.getInstance("SHA-256");
       // The purpose of the cryptography here is not secrecy, but just to make the
-      // DelegationReference opaque enough for the consumer. Therefor we do not need to keep the key
-      // secret. We only need to make sure that for the ALGORITHM_VERSION=1 it stays the same.
-      String constant = "delegation-reference-issuer"; // Don't change the value.
+      // ContinuationReference opaque enough for the consumer. Therefor we do not need to keep the
+      // key secret. We only need to make sure that for the ALGORITHM_VERSION=1 it stays the same.
+      String constant = "reference-issuer"; // Don't change the value.
       byte[] hash = sha256.digest(constant.getBytes(StandardCharsets.UTF_8));
       byte[] keyBytes = new byte[16];
       System.arraycopy(hash, 0, keyBytes, 0, 16);
@@ -50,7 +50,7 @@ class DelegationReferenceIssuer {
     }
   }
 
-  DelegationReference issueReference(InboxMessage inboxMessage) {
+  ContinuationReference issueReference(InboxMessage inboxMessage) {
     long id = inboxMessage.getId();
     int version = inboxMessage.getVersion();
     byte[] input = new byte[12];
@@ -58,15 +58,15 @@ class DelegationReferenceIssuer {
     byte[] encrypted = encrypt(input);
     byte[] output = new byte[1 + encrypted.length];
     ByteBuffer.wrap(output).put(ALGORITHM_VERSION).put(encrypted);
-    return DelegationReference.fromString(HexFormat.of().formatHex(output));
+    return ContinuationReference.fromString(HexFormat.of().formatHex(output));
   }
 
-  IdVersion dereference(DelegationReference reference) {
+  IdVersion dereference(ContinuationReference reference) {
     String value = reference.toString();
     byte[] data = HexFormat.of().parseHex(value);
     if (data[0] != ALGORITHM_VERSION) {
       throw new IllegalArgumentException(
-          "Invalid delegation reference. Unsupported version: " + data[0]);
+          "Invalid continuation reference. Unsupported version: " + data[0]);
     }
     byte[] encrypted = new byte[data.length - 1];
     System.arraycopy(data, 1, encrypted, 0, encrypted.length);
@@ -112,7 +112,7 @@ class DelegationReferenceIssuer {
         | InvalidAlgorithmParameterException
         | BadPaddingException
         | InvalidKeyException e) {
-      throw new IllegalArgumentException("Invalid delegation reference", e);
+      throw new IllegalArgumentException("Invalid continuation reference", e);
     }
   }
 

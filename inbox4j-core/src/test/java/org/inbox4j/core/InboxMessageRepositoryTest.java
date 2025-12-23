@@ -202,7 +202,7 @@ class InboxMessageRepositoryTest extends AbstractDatabaseTest {
     setUpInboxMessage(cut, Status.COMPLETED, "D-1", "D-2");
     setUpInboxMessage(cut, Status.RETRY, "D-2");
     setUpInboxMessage(cut, Status.COMPLETED, "E-1", "E-2");
-    setUpInboxMessage(cut, Status.DELEGATED, "E-2");
+    setUpInboxMessage(cut, Status.WAITING_FOR_CONTINUATION, "E-2");
 
     var actual = cut.findAllProcessingRelevant();
 

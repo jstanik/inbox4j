@@ -17,27 +17,27 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import org.inbox4j.core.DelegationReferenceIssuer.IdVersion;
+import org.inbox4j.core.ContinuationReferenceIssuer.IdVersion;
 import org.junit.jupiter.api.Test;
 
-class DelegationReferenceIssuerTest {
+class ContinuationReferenceIssuerTest {
 
   @Test
   void issueReference() {
-    DelegationReferenceIssuer cut = new DelegationReferenceIssuer();
+    ContinuationReferenceIssuer cut = new ContinuationReferenceIssuer();
 
     InboxMessage inboxMessage = mock(InboxMessage.class);
     when(inboxMessage.getId()).thenReturn(256L);
     when(inboxMessage.getVersion()).thenReturn(3);
 
-    DelegationReference actual = cut.issueReference(inboxMessage);
+    ContinuationReference actual = cut.issueReference(inboxMessage);
     String referenceValue = actual.toString();
     assertThat(referenceValue).matches("^01[0-9a-fA-F]{80}$");
   }
 
   @Test
   void dereference() {
-    DelegationReferenceIssuer cut = new DelegationReferenceIssuer();
+    ContinuationReferenceIssuer cut = new ContinuationReferenceIssuer();
 
     long id = 443L;
     int version = 7;
@@ -46,7 +46,7 @@ class DelegationReferenceIssuerTest {
     when(inboxMessage.getId()).thenReturn(id);
     when(inboxMessage.getVersion()).thenReturn(version);
 
-    DelegationReference reference = cut.issueReference(inboxMessage);
+    ContinuationReference reference = cut.issueReference(inboxMessage);
     IdVersion idVersion = cut.dereference(reference);
 
     assertThat(idVersion.id()).isEqualTo(id);

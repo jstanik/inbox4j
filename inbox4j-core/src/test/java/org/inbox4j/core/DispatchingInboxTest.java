@@ -194,8 +194,8 @@ class DispatchingInboxTest extends AbstractDatabaseTest {
   }
 
   @Test
-  void delegatedProcessing() {
-    DelegatingChannel channel = new DelegatingChannel(CHANNEL);
+  void continuationProcessing() {
+    ContinuationChannel channel = new ContinuationChannel(CHANNEL);
     DispatchingInbox inbox =
         (DispatchingInbox) Inbox.builder(dataSource).addChannel(channel).build();
     channel.setInbox(inbox);
@@ -215,7 +215,8 @@ class DispatchingInboxTest extends AbstractDatabaseTest {
       span.end();
     }
 
-    assertStatusReached(message.getId(), Status.DELEGATED, inbox, Duration.ofSeconds(10));
+    assertStatusReached(
+        message.getId(), Status.WAITING_FOR_CONTINUATION, inbox, Duration.ofSeconds(10));
     channel.resumeProcessing();
     assertStatusReached(message.getId(), Status.COMPLETED, inbox, Duration.ofSeconds(10));
 
@@ -394,13 +395,13 @@ class DispatchingInboxTest extends AbstractDatabaseTest {
     }
   }
 
-  private class DelegatingChannel implements InboxMessageChannel {
+  private static class ContinuationChannel implements InboxMessageChannel {
     private final String name;
     private Inbox inbox;
     private String recordedTraceId;
     private final CountDownLatch latch = new CountDownLatch(1);
 
-    public DelegatingChannel(String name) {
+    public ContinuationChannel(String name) {
       this.name = name;
     }
 
@@ -419,7 +420,7 @@ class DispatchingInboxTest extends AbstractDatabaseTest {
 
     @Override
     public ProcessingResult processMessage(InboxMessage message) {
-      return new DelegateResult(
+      return new ContinuationResult(
           message,
           (m, reference) -> {
             try {
@@ -475,7 +476,7 @@ class DispatchingInboxTest extends AbstractDatabaseTest {
       return switch (metadata[0]) {
         case 0x01 -> new RetryResult(message, new byte[] {0}, Duration.ofMillis(100));
         case 0x02 ->
-            new DelegateResult(
+            new ContinuationResult(
                 message,
                 (m, reference) -> {
                   ids.add(message.getId());

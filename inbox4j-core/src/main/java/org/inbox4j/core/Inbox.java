@@ -55,12 +55,12 @@ public interface Inbox {
   InboxMessage load(long id);
 
   /**
-   * Completes the delegated processing of an inbox message.
+   * Completes the processing of an inbox message.
    *
-   * @param delegationReference the reference to the delegation
+   * @param continuationReference the reference to the continuation that started the processing
    * @param success flag signaling success or failure of the operation
    */
-  void complete(DelegationReference delegationReference, boolean success);
+  void complete(ContinuationReference continuationReference, boolean success);
 
   /**
    * Resets an inbox message to the {@link Status#NEW} status. Reset is only allowed if the inbox
