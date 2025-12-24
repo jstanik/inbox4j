@@ -31,9 +31,9 @@ import org.inbox4j.core.InboxMessageChannel.RetryResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-class DispatchingInbox implements Inbox {
+class InboxController implements Inbox {
 
-  private static final Logger LOGGER = LoggerFactory.getLogger(DispatchingInbox.class);
+  private static final Logger LOGGER = LoggerFactory.getLogger(InboxController.class);
 
   private static final Duration MINIMAL_RETENTION_PERIOD = Duration.ofHours(1);
 
@@ -50,7 +50,7 @@ class DispatchingInbox implements Inbox {
   private final BlockingQueue<Event> events = new ArrayBlockingQueue<>(100, true);
   private int parallelCount = 0;
 
-  DispatchingInbox(
+  InboxController(
       InboxMessageRepository inboxMessageRepository,
       Dispatcher dispatcher,
       ContinuationExecutor continuationExecutor,

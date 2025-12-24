@@ -116,7 +116,7 @@ public class InboxBuilder {
         new ContinuationExecutor(
             new ContinuationReferenceIssuer(), resolvedExecutorService, OTEL_PLUGIN);
 
-    return new DispatchingInbox(
+    return new InboxController(
         repository,
         dispatcher,
         continuationExecutor,

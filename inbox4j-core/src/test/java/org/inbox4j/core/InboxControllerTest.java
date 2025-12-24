@@ -43,15 +43,14 @@ import org.inbox4j.core.InboxMessageRepository.Configuration;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
-class DispatchingInboxTest extends AbstractDatabaseTest {
+class InboxControllerTest extends AbstractDatabaseTest {
 
   private static final String CHANNEL = "channelName";
 
   @Test
   void inboxDispatching() {
     TestChannel channel = new TestChannel(CHANNEL);
-    DispatchingInbox inbox =
-        (DispatchingInbox) Inbox.builder(dataSource).addChannel(channel).build();
+    InboxController inbox = (InboxController) Inbox.builder(dataSource).addChannel(channel).build();
 
     InboxMessage recipient1Message1 = inbox.insert(inboxMessageData("recipient1"));
     InboxMessage recipient1Message2 = inbox.insert(inboxMessageData("recipient1"));
@@ -78,8 +77,8 @@ class DispatchingInboxTest extends AbstractDatabaseTest {
     ScheduledExecutorService retryExecutor = mock(ScheduledExecutorService.class);
     MutableInstantSource instantSource =
         new MutableInstantSource(Instant.now().truncatedTo(ChronoUnit.MILLIS));
-    DispatchingInbox inbox =
-        (DispatchingInbox)
+    InboxController inbox =
+        (InboxController)
             Inbox.builder(dataSource)
                 .withInternalExecutorService(retryExecutor)
                 .withInstantSource(instantSource)
@@ -117,8 +116,8 @@ class DispatchingInboxTest extends AbstractDatabaseTest {
     repo.update(message, Status.RETRY, null, retryAt);
 
     TestChannel channel = new TestChannel(CHANNEL);
-    DispatchingInbox inbox =
-        (DispatchingInbox)
+    InboxController inbox =
+        (InboxController)
             Inbox.builder(dataSource).withInstantSource(instantSource).addChannel(channel).build();
 
     channel.awaitProcessing(recipientName);
@@ -134,8 +133,7 @@ class DispatchingInboxTest extends AbstractDatabaseTest {
     var message = repo.insert(new MessageInsertionRequest(CHANNEL, new byte[0], recipientName));
 
     TestChannel channel = new TestChannel(CHANNEL);
-    DispatchingInbox inbox =
-        (DispatchingInbox) Inbox.builder(dataSource).addChannel(channel).build();
+    InboxController inbox = (InboxController) Inbox.builder(dataSource).addChannel(channel).build();
 
     channel.awaitProcessing(recipientName);
     assertStatusReached(message.getId(), Status.COMPLETED, inbox, Duration.ofSeconds(10));
@@ -147,8 +145,7 @@ class DispatchingInboxTest extends AbstractDatabaseTest {
   void inboxDispatchingWithOpenTelemetry() {
     TestChannel channel = new TestChannel(CHANNEL);
 
-    DispatchingInbox inbox =
-        (DispatchingInbox) Inbox.builder(dataSource).addChannel(channel).build();
+    InboxController inbox = (InboxController) Inbox.builder(dataSource).addChannel(channel).build();
 
     Span span =
         GlobalOpenTelemetry.getTracer(InboxMessageRepositoryTest.class.getName())
@@ -172,8 +169,7 @@ class DispatchingInboxTest extends AbstractDatabaseTest {
   @Test
   void failedProcessingPutsMessageToErrorState() {
     FailingChannel channel = new FailingChannel(CHANNEL);
-    DispatchingInbox inbox =
-        (DispatchingInbox) Inbox.builder(dataSource).addChannel(channel).build();
+    InboxController inbox = (InboxController) Inbox.builder(dataSource).addChannel(channel).build();
 
     InboxMessage message = inbox.insert(inboxMessageData("recipient1"));
 
@@ -184,8 +180,7 @@ class DispatchingInboxTest extends AbstractDatabaseTest {
   @Test
   void channelThrowsExceptionAndMessageGoesToErrorState() {
     ThrowingChannel channel = new ThrowingChannel(CHANNEL);
-    DispatchingInbox inbox =
-        (DispatchingInbox) Inbox.builder(dataSource).addChannel(channel).build();
+    InboxController inbox = (InboxController) Inbox.builder(dataSource).addChannel(channel).build();
 
     InboxMessage message = inbox.insert(inboxMessageData("recipient1"));
 
@@ -196,8 +191,7 @@ class DispatchingInboxTest extends AbstractDatabaseTest {
   @Test
   void continuationProcessing() {
     ContinuationChannel channel = new ContinuationChannel(CHANNEL);
-    DispatchingInbox inbox =
-        (DispatchingInbox) Inbox.builder(dataSource).addChannel(channel).build();
+    InboxController inbox = (InboxController) Inbox.builder(dataSource).addChannel(channel).build();
     channel.setInbox(inbox);
 
     Span span =
@@ -229,8 +223,8 @@ class DispatchingInboxTest extends AbstractDatabaseTest {
 
     FlagDrivenChannel channel = new FlagDrivenChannel(CHANNEL);
 
-    DispatchingInbox inbox =
-        (DispatchingInbox)
+    InboxController inbox =
+        (InboxController)
             Inbox.builder(dataSource).addChannel(channel).withMaxConcurrency(4).build();
     channel.setInbox(inbox);
 
@@ -269,7 +263,7 @@ class DispatchingInboxTest extends AbstractDatabaseTest {
   }
 
   private static void assertStatusReached(
-      long id, Status expectedStatus, DispatchingInbox inbox, Duration timeout) {
+      long id, Status expectedStatus, InboxController inbox, Duration timeout) {
     long tryUntil = Instant.now().toEpochMilli() + timeout.toMillis();
 
     while (tryUntil > Instant.now().toEpochMilli()) {
