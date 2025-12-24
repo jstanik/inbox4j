@@ -38,7 +38,7 @@ class DispatcherTest {
 
   @AfterEach
   void tearDown() {
-    cut.close();
+    cut.shutdown();
   }
 
   @Test

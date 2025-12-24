@@ -40,6 +40,7 @@ import org.inbox4j.core.InboxMessage.Status;
 import org.inbox4j.core.InboxMessageChannel.ProcessingSucceededResult;
 import org.inbox4j.core.InboxMessageChannel.RetryResult;
 import org.inbox4j.core.InboxMessageRepository.Configuration;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
@@ -47,15 +48,24 @@ class InboxControllerTest extends AbstractDatabaseTest {
 
   private static final String CHANNEL = "channelName";
 
+  private InboxController cut;
+
+  @AfterEach
+  void tearDown() {
+    if (cut != null) {
+      cut.close();
+    }
+  }
+
   @Test
   void inboxDispatching() {
     TestChannel channel = new TestChannel(CHANNEL);
-    InboxController inbox = (InboxController) Inbox.builder(dataSource).addChannel(channel).build();
+    cut = (InboxController) Inbox.builder(dataSource).addChannel(channel).build();
 
-    InboxMessage recipient1Message1 = inbox.insert(inboxMessageData("recipient1"));
-    InboxMessage recipient1Message2 = inbox.insert(inboxMessageData("recipient1"));
-    InboxMessage recipient2Message1 = inbox.insert(inboxMessageData("recipient2"));
-    InboxMessage recipient2Message2 = inbox.insert(inboxMessageData("recipient2"));
+    InboxMessage recipient1Message1 = cut.insert(inboxMessageData("recipient1"));
+    InboxMessage recipient1Message2 = cut.insert(inboxMessageData("recipient1"));
+    InboxMessage recipient2Message1 = cut.insert(inboxMessageData("recipient2"));
+    InboxMessage recipient2Message2 = cut.insert(inboxMessageData("recipient2"));
 
     var context = channel.awaitProcessing("recipient1");
     assertThat(context.message.getId()).isEqualTo(recipient1Message1.getId());
@@ -66,9 +76,7 @@ class InboxControllerTest extends AbstractDatabaseTest {
     context = channel.awaitProcessing("recipient2");
     assertThat(context.message.getId()).isEqualTo(recipient2Message2.getId());
 
-    assertStatusReached(context.message.getId(), Status.COMPLETED, inbox, Duration.ofSeconds(10));
-
-    inbox.stop();
+    assertStatusReached(context.message.getId(), Status.COMPLETED, cut, Duration.ofSeconds(10));
   }
 
   @Test
@@ -77,7 +85,7 @@ class InboxControllerTest extends AbstractDatabaseTest {
     ScheduledExecutorService retryExecutor = mock(ScheduledExecutorService.class);
     MutableInstantSource instantSource =
         new MutableInstantSource(Instant.now().truncatedTo(ChronoUnit.MILLIS));
-    InboxController inbox =
+    cut =
         (InboxController)
             Inbox.builder(dataSource)
                 .withInternalExecutorService(retryExecutor)
@@ -85,12 +93,12 @@ class InboxControllerTest extends AbstractDatabaseTest {
                 .addChannel(channel)
                 .build();
 
-    InboxMessage message = inbox.insert(inboxMessageData("recipient1"));
+    InboxMessage message = cut.insert(inboxMessageData("recipient1"));
 
     Duration retryDelay = Duration.ofMillis(100);
     var context = channel.awaitProcessing("recipient1", m -> new RetryResult(m, retryDelay));
-    assertStatusReached(context.message.getId(), Status.RETRY, inbox, Duration.ofSeconds(10));
-    var retryMessage = inbox.load(message.getId());
+    assertStatusReached(context.message.getId(), Status.RETRY, cut, Duration.ofSeconds(10));
+    var retryMessage = cut.load(message.getId());
     assertThat(retryMessage.getRetryAt()).isEqualTo(instantSource.instant().plus(retryDelay));
 
     var runnableCaptor = ArgumentCaptor.forClass(Runnable.class);
@@ -99,8 +107,7 @@ class InboxControllerTest extends AbstractDatabaseTest {
     var retryAction = runnableCaptor.getValue();
     retryAction.run();
     context = channel.awaitProcessing("recipient1", ProcessingSucceededResult::new);
-    assertStatusReached(context.message.getId(), Status.COMPLETED, inbox, Duration.ofSeconds(10));
-    inbox.stop();
+    assertStatusReached(context.message.getId(), Status.COMPLETED, cut, Duration.ofSeconds(10));
   }
 
   @Test
@@ -116,14 +123,12 @@ class InboxControllerTest extends AbstractDatabaseTest {
     repo.update(message, Status.RETRY, null, retryAt);
 
     TestChannel channel = new TestChannel(CHANNEL);
-    InboxController inbox =
+    cut =
         (InboxController)
             Inbox.builder(dataSource).withInstantSource(instantSource).addChannel(channel).build();
 
     channel.awaitProcessing(recipientName);
-    assertStatusReached(message.getId(), Status.COMPLETED, inbox, Duration.ofSeconds(10));
-
-    inbox.stop();
+    assertStatusReached(message.getId(), Status.COMPLETED, cut, Duration.ofSeconds(10));
   }
 
   @Test
@@ -133,19 +138,17 @@ class InboxControllerTest extends AbstractDatabaseTest {
     var message = repo.insert(new MessageInsertionRequest(CHANNEL, new byte[0], recipientName));
 
     TestChannel channel = new TestChannel(CHANNEL);
-    InboxController inbox = (InboxController) Inbox.builder(dataSource).addChannel(channel).build();
+    cut = (InboxController) Inbox.builder(dataSource).addChannel(channel).build();
 
     channel.awaitProcessing(recipientName);
-    assertStatusReached(message.getId(), Status.COMPLETED, inbox, Duration.ofSeconds(10));
-
-    inbox.stop();
+    assertStatusReached(message.getId(), Status.COMPLETED, cut, Duration.ofSeconds(10));
   }
 
   @Test
   void inboxDispatchingWithOpenTelemetry() {
     TestChannel channel = new TestChannel(CHANNEL);
 
-    InboxController inbox = (InboxController) Inbox.builder(dataSource).addChannel(channel).build();
+    cut = (InboxController) Inbox.builder(dataSource).addChannel(channel).build();
 
     Span span =
         GlobalOpenTelemetry.getTracer(InboxMessageRepositoryTest.class.getName())
@@ -155,7 +158,7 @@ class InboxControllerTest extends AbstractDatabaseTest {
 
     String expectedTraceId;
     try (Scope ignore = span.makeCurrent()) {
-      inbox.insert(inboxMessageData("recipient1"));
+      cut.insert(inboxMessageData("recipient1"));
       expectedTraceId = span.getSpanContext().getTraceId();
     } finally {
       span.end();
@@ -163,36 +166,33 @@ class InboxControllerTest extends AbstractDatabaseTest {
 
     var context = channel.awaitProcessing("recipient1");
     assertThat(context.traceId).isEqualTo(expectedTraceId);
-    inbox.stop();
   }
 
   @Test
   void failedProcessingPutsMessageToErrorState() {
     FailingChannel channel = new FailingChannel(CHANNEL);
-    InboxController inbox = (InboxController) Inbox.builder(dataSource).addChannel(channel).build();
+    cut = (InboxController) Inbox.builder(dataSource).addChannel(channel).build();
 
-    InboxMessage message = inbox.insert(inboxMessageData("recipient1"));
+    InboxMessage message = cut.insert(inboxMessageData("recipient1"));
 
-    assertStatusReached(message.getId(), Status.ERROR, inbox, Duration.ofSeconds(10));
-    inbox.stop();
+    assertStatusReached(message.getId(), Status.ERROR, cut, Duration.ofSeconds(10));
   }
 
   @Test
   void channelThrowsExceptionAndMessageGoesToErrorState() {
     ThrowingChannel channel = new ThrowingChannel(CHANNEL);
-    InboxController inbox = (InboxController) Inbox.builder(dataSource).addChannel(channel).build();
+    cut = (InboxController) Inbox.builder(dataSource).addChannel(channel).build();
 
-    InboxMessage message = inbox.insert(inboxMessageData("recipient1"));
+    InboxMessage message = cut.insert(inboxMessageData("recipient1"));
 
-    assertStatusReached(message.getId(), Status.ERROR, inbox, Duration.ofSeconds(10));
-    inbox.stop();
+    assertStatusReached(message.getId(), Status.ERROR, cut, Duration.ofSeconds(10));
   }
 
   @Test
   void continuationProcessing() {
     ContinuationChannel channel = new ContinuationChannel(CHANNEL);
-    InboxController inbox = (InboxController) Inbox.builder(dataSource).addChannel(channel).build();
-    channel.setInbox(inbox);
+    cut = (InboxController) Inbox.builder(dataSource).addChannel(channel).build();
+    channel.setInbox(cut);
 
     Span span =
         GlobalOpenTelemetry.getTracer(InboxMessageRepositoryTest.class.getName())
@@ -204,18 +204,17 @@ class InboxControllerTest extends AbstractDatabaseTest {
     InboxMessage message;
     try (Scope ignore = span.makeCurrent()) {
       expectedTraceId = span.getSpanContext().getTraceId();
-      message = inbox.insert(inboxMessageData("recipient1"));
+      message = cut.insert(inboxMessageData("recipient1"));
     } finally {
       span.end();
     }
 
     assertStatusReached(
-        message.getId(), Status.WAITING_FOR_CONTINUATION, inbox, Duration.ofSeconds(10));
+        message.getId(), Status.WAITING_FOR_CONTINUATION, cut, Duration.ofSeconds(10));
     channel.resumeProcessing();
-    assertStatusReached(message.getId(), Status.COMPLETED, inbox, Duration.ofSeconds(10));
+    assertStatusReached(message.getId(), Status.COMPLETED, cut, Duration.ofSeconds(10));
 
     assertThat(channel.getRecordedTraceId()).isEqualTo(expectedTraceId);
-    inbox.stop();
   }
 
   @Test
@@ -223,10 +222,10 @@ class InboxControllerTest extends AbstractDatabaseTest {
 
     FlagDrivenChannel channel = new FlagDrivenChannel(CHANNEL);
 
-    InboxController inbox =
+    cut =
         (InboxController)
             Inbox.builder(dataSource).addChannel(channel).withMaxConcurrency(4).build();
-    channel.setInbox(inbox);
+    channel.setInbox(cut);
 
     List<String> recipients = IntStream.rangeClosed(1, 10).mapToObj(v -> "recipient" + v).toList();
 
@@ -245,7 +244,7 @@ class InboxControllerTest extends AbstractDatabaseTest {
 
         messageIdsByRecipient
             .computeIfAbsent(recipient, k -> new ArrayList<>())
-            .add(inbox.insert(request).getId());
+            .add(cut.insert(request).getId());
       }
     }
 
@@ -253,13 +252,12 @@ class InboxControllerTest extends AbstractDatabaseTest {
         .map(list -> list.get(list.size() - 1))
         .forEach(
             messageId ->
-                assertStatusReached(messageId, Status.COMPLETED, inbox, Duration.ofSeconds(60)));
+                assertStatusReached(messageId, Status.COMPLETED, cut, Duration.ofSeconds(60)));
 
     for (String recipient : recipients) {
       assertThat(channel.getRecordedIds().get(recipient))
           .containsExactlyElementsOf(messageIdsByRecipient.get(recipient));
     }
-    inbox.stop();
   }
 
   private static void assertStatusReached(

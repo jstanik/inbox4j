@@ -17,28 +17,28 @@ import static java.util.function.Function.identity;
 import static java.util.stream.Collectors.toMap;
 import static org.slf4j.LoggerFactory.getLogger;
 
-import java.io.Closeable;
+import java.time.Duration;
 import java.util.Collection;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.TimeUnit;
 import org.inbox4j.core.InboxMessageChannel.ProcessingFailedResult;
 import org.inbox4j.core.InboxMessageChannel.ProcessingResult;
 import org.slf4j.Logger;
 
-class Dispatcher implements Closeable {
+class Dispatcher extends AbstractExecutorAwareLifecycle<ExecutorService> {
   private static final Logger LOGGER = getLogger(Dispatcher.class);
   private final Map<String, InboxMessageChannel> channels;
-  private final ExecutorService executor;
   private final OtelPlugin otelPlugin;
 
   Dispatcher(
       Collection<InboxMessageChannel> channels,
       ExecutorService executorService,
       OtelPlugin otelPlugin) {
+    super(executorService);
     this.channels =
         Map.copyOf(channels.stream().collect(toMap(InboxMessageChannel::getName, identity())));
-    this.executor = executorService;
     this.otelPlugin = otelPlugin;
   }
 
@@ -93,7 +93,19 @@ class Dispatcher implements Closeable {
   }
 
   @Override
-  public void close() {
-    executor.shutdownNow();
+  public void shutdown() {
+    executor.shutdown();
+  }
+
+  @Override
+  public void awaitTermination(Duration timeout) {
+    try {
+      if (!executor.awaitTermination(timeout.toMillis(), TimeUnit.MILLISECONDS)) {
+        executor.shutdownNow();
+      }
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      executor.shutdownNow();
+    }
   }
 }

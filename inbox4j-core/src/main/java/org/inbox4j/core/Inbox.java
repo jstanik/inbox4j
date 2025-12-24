@@ -29,7 +29,7 @@ import org.inbox4j.core.InboxMessage.Status;
  * @see InboxMessage
  * @see InboxMessageChannel
  */
-public interface Inbox {
+public interface Inbox extends AutoCloseable {
 
   /** {@return a new builder to create a new inbox instance} */
   static InboxBuilder builder(DataSource dataSource) {

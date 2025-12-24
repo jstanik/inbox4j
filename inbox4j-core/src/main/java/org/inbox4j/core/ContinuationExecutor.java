@@ -17,16 +17,15 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import org.inbox4j.core.ContinuationReferenceIssuer.IdVersion;
 
-class ContinuationExecutor {
+class ContinuationExecutor extends AbstractExecutorAwareLifecycle<ExecutorService> {
   private final ContinuationReferenceIssuer referenceIssuer;
-  private final ExecutorService executor;
   private final OtelPlugin otelPlugin;
 
   ContinuationExecutor(
       ContinuationReferenceIssuer referenceIssuer,
       ExecutorService executor,
       OtelPlugin otelPlugin) {
-    this.executor = executor;
+    super(executor);
     this.referenceIssuer = referenceIssuer;
     this.otelPlugin = otelPlugin;
   }

@@ -21,8 +21,10 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.inbox4j.core.ContinuationReferenceIssuer.IdVersion;
 import org.inbox4j.core.InboxMessage.Status;
 import org.inbox4j.core.InboxMessageChannel.ProcessingFailedResult;
@@ -48,6 +50,7 @@ class InboxController implements Inbox {
   private final Deque<Recipient> recipientsToCheck = new LinkedList<>();
   private final Deque<RetryTriggered> retryRequests = new LinkedList<>();
   private final BlockingQueue<Event> events = new ArrayBlockingQueue<>(100, true);
+  private final AtomicBoolean closed = new AtomicBoolean(false);
   private int parallelCount = 0;
 
   InboxController(
@@ -99,6 +102,8 @@ class InboxController implements Inbox {
 
   @Override
   public InboxMessage insert(MessageInsertionRequest request) {
+    checkNotClosed();
+
     if (!dispatcher.isSupported(request.getChannelName())) {
       throw new IllegalArgumentException(
           "No channel with the name '" + request.getChannelName() + "' configured");
@@ -376,17 +381,50 @@ class InboxController implements Inbox {
   }
 
   void cleanup() {
-    throw new UnsupportedOperationException();
+    throw new UnsupportedOperationException(); // TODO
   }
 
-  void stop() {
+  private void checkNotClosed() {
+    if (closed.get()) {
+      throw new RejectedExecutionException("Inbox closed");
+    }
+  }
+
+  @Override
+  public void close() {
+    closed.set(true);
     eventLoopThread.interrupt();
-    dispatcher.close();
+    dispatcher.shutdown();
+    continuationExecutor.shutdown();
     internalExecutorService.shutdown();
 
+    Instant waitUntil = instantSource.instant().plusSeconds(30);
+
     try {
-      eventLoopThread.join(5000);
-    } catch (InterruptedException interruptedException) {
+      for (Lifecycle lifecycle : List.of(dispatcher, continuationExecutor)) {
+        Duration duration = Duration.between(instantSource.instant(), waitUntil);
+        if (duration.isNegative()) {
+          return;
+        }
+
+        lifecycle.awaitTermination(duration);
+      }
+
+      Duration duration = Duration.between(instantSource.instant(), waitUntil);
+      if (duration.isNegative()) {
+        return;
+      }
+      if (!internalExecutorService.awaitTermination(duration.toMillis(), TimeUnit.MILLISECONDS)) {
+        internalExecutorService.shutdownNow();
+      }
+
+      duration = Duration.between(instantSource.instant(), waitUntil);
+      if (duration.isNegative()) {
+        return;
+      }
+
+      eventLoopThread.join(duration.toMillis());
+    } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
     }
   }
