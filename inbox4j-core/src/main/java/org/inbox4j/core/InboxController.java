@@ -386,17 +386,16 @@ class InboxController implements Inbox {
       for (Lifecycle lifecycle : List.of(dispatcher, continuationExecutor, retentionPolicy)) {
         Duration duration = Duration.between(instantSource.instant(), waitUntil);
         if (duration.isNegative()) {
-          return;
+          break;
         }
 
         lifecycle.awaitTermination(duration);
       }
 
       Duration duration = Duration.between(instantSource.instant(), waitUntil);
-      if (duration.isNegative()) {
-        return;
-      }
-      if (!internalExecutorService.awaitTermination(duration.toMillis(), TimeUnit.MILLISECONDS)) {
+      if (duration.isNegative()
+          || !internalExecutorService.awaitTermination(
+              duration.toMillis(), TimeUnit.MILLISECONDS)) {
         internalExecutorService.shutdownNow();
       }
 

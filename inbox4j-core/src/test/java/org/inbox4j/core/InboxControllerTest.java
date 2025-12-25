@@ -219,7 +219,6 @@ class InboxControllerTest extends AbstractDatabaseTest {
 
   @Test
   void processLargerAmountOfMessagesForTwoDifferentRecipients() {
-
     FlagDrivenChannel channel = new FlagDrivenChannel(CHANNEL);
 
     cut =
