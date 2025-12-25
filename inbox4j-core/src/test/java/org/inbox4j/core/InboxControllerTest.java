@@ -60,7 +60,7 @@ class InboxControllerTest extends AbstractDatabaseTest {
   @Test
   void inboxDispatching() {
     TestChannel channel = new TestChannel(CHANNEL);
-    cut = (InboxController) Inbox.builder(dataSource).addChannel(channel).build();
+    cut = (InboxController) Inbox.builder(dataSource).addChannel(channel).buildAndStart();
 
     InboxMessage recipient1Message1 = cut.insert(inboxMessageData("recipient1"));
     InboxMessage recipient1Message2 = cut.insert(inboxMessageData("recipient1"));
@@ -91,7 +91,7 @@ class InboxControllerTest extends AbstractDatabaseTest {
                 .withInternalExecutorService(retryExecutor)
                 .withInstantSource(instantSource)
                 .addChannel(channel)
-                .build();
+                .buildAndStart();
 
     InboxMessage message = cut.insert(inboxMessageData("recipient1"));
 
@@ -125,7 +125,10 @@ class InboxControllerTest extends AbstractDatabaseTest {
     TestChannel channel = new TestChannel(CHANNEL);
     cut =
         (InboxController)
-            Inbox.builder(dataSource).withInstantSource(instantSource).addChannel(channel).build();
+            Inbox.builder(dataSource)
+                .withInstantSource(instantSource)
+                .addChannel(channel)
+                .buildAndStart();
 
     channel.awaitProcessing(recipientName);
     assertStatusReached(message.getId(), Status.COMPLETED, cut, Duration.ofSeconds(10));
@@ -138,7 +141,7 @@ class InboxControllerTest extends AbstractDatabaseTest {
     var message = repo.insert(new MessageInsertionRequest(CHANNEL, new byte[0], recipientName));
 
     TestChannel channel = new TestChannel(CHANNEL);
-    cut = (InboxController) Inbox.builder(dataSource).addChannel(channel).build();
+    cut = (InboxController) Inbox.builder(dataSource).addChannel(channel).buildAndStart();
 
     channel.awaitProcessing(recipientName);
     assertStatusReached(message.getId(), Status.COMPLETED, cut, Duration.ofSeconds(10));
@@ -148,7 +151,7 @@ class InboxControllerTest extends AbstractDatabaseTest {
   void inboxDispatchingWithOpenTelemetry() {
     TestChannel channel = new TestChannel(CHANNEL);
 
-    cut = (InboxController) Inbox.builder(dataSource).addChannel(channel).build();
+    cut = (InboxController) Inbox.builder(dataSource).addChannel(channel).buildAndStart();
 
     Span span =
         GlobalOpenTelemetry.getTracer(InboxMessageRepositoryTest.class.getName())
@@ -171,7 +174,7 @@ class InboxControllerTest extends AbstractDatabaseTest {
   @Test
   void failedProcessingPutsMessageToErrorState() {
     FailingChannel channel = new FailingChannel(CHANNEL);
-    cut = (InboxController) Inbox.builder(dataSource).addChannel(channel).build();
+    cut = (InboxController) Inbox.builder(dataSource).addChannel(channel).buildAndStart();
 
     InboxMessage message = cut.insert(inboxMessageData("recipient1"));
 
@@ -181,7 +184,7 @@ class InboxControllerTest extends AbstractDatabaseTest {
   @Test
   void channelThrowsExceptionAndMessageGoesToErrorState() {
     ThrowingChannel channel = new ThrowingChannel(CHANNEL);
-    cut = (InboxController) Inbox.builder(dataSource).addChannel(channel).build();
+    cut = (InboxController) Inbox.builder(dataSource).addChannel(channel).buildAndStart();
 
     InboxMessage message = cut.insert(inboxMessageData("recipient1"));
 
@@ -191,7 +194,7 @@ class InboxControllerTest extends AbstractDatabaseTest {
   @Test
   void continuationProcessing() {
     ContinuationChannel channel = new ContinuationChannel(CHANNEL);
-    cut = (InboxController) Inbox.builder(dataSource).addChannel(channel).build();
+    cut = (InboxController) Inbox.builder(dataSource).addChannel(channel).buildAndStart();
     channel.setInbox(cut);
 
     Span span =
@@ -223,7 +226,7 @@ class InboxControllerTest extends AbstractDatabaseTest {
 
     cut =
         (InboxController)
-            Inbox.builder(dataSource).addChannel(channel).withMaxConcurrency(4).build();
+            Inbox.builder(dataSource).addChannel(channel).withMaxConcurrency(4).buildAndStart();
     channel.setInbox(cut);
 
     List<String> recipients = IntStream.rangeClosed(1, 10).mapToObj(v -> "recipient" + v).toList();

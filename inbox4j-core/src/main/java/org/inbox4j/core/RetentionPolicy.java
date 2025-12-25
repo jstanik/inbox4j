@@ -19,7 +19,7 @@ import java.time.InstantSource;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
-class RetentionPolicy extends AbstractExecutorAwareLifecycle<ScheduledExecutorService> {
+class RetentionPolicy extends ExecutorAwareLifecycle<ScheduledExecutorService> {
 
   private static final Duration MINIMAL_RETENTION_PERIOD = java.time.Duration.ofMinutes(1);
 

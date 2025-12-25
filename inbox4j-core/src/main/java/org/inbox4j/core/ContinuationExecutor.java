@@ -17,7 +17,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import org.inbox4j.core.ContinuationReferenceIssuer.IdVersion;
 
-class ContinuationExecutor extends AbstractExecutorAwareLifecycle<ExecutorService> {
+class ContinuationExecutor extends ExecutorAwareLifecycle<ExecutorService> {
   private final ContinuationReferenceIssuer referenceIssuer;
   private final OtelPlugin otelPlugin;
 

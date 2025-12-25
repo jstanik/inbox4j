@@ -36,6 +36,9 @@ public interface Inbox extends AutoCloseable {
     return new InboxBuilder(dataSource);
   }
 
+  /** Starts background message processing. */
+  void start();
+
   /**
    * Inserts a new message to the inbox according to the request. This method returns immediately
    * after the message is inserted in inbox. It <b>does not</b> wait for the message to be

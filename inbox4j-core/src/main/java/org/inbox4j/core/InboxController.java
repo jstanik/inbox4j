@@ -13,6 +13,8 @@
  */
 package org.inbox4j.core;
 
+import static java.lang.Thread.currentThread;
+
 import java.time.Duration;
 import java.time.Instant;
 import java.time.InstantSource;
@@ -21,6 +23,8 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -42,39 +46,35 @@ class InboxController implements Inbox {
   private final ContinuationExecutor continuationExecutor;
   private final RetentionPolicy retentionPolicy;
   private final int maxConcurrency;
-  private final ScheduledExecutorService internalExecutorService;
-  private final Thread eventLoopThread;
+  private final ScheduledExecutorService retryExecutor;
+  private final ExecutorService eventLoopExecutor;
   private final InstantSource instantSource;
 
   private final Deque<Recipient> recipientsToCheck = new LinkedList<>();
   private final Deque<RetryTriggered> retryRequests = new LinkedList<>();
   private final BlockingQueue<Event> events = new ArrayBlockingQueue<>(100, true);
+  private final AtomicBoolean started = new AtomicBoolean(false);
   private final AtomicBoolean closed = new AtomicBoolean(false);
   private int parallelCount = 0;
+  private Future<?> eventLoopTask;
 
   InboxController(
       InboxMessageRepository inboxMessageRepository,
       Dispatcher dispatcher,
       ContinuationExecutor continuationExecutor,
       RetentionPolicy retentionPolicy,
-      ScheduledExecutorService internalExecutorService,
+      ScheduledExecutorService retryExecutor,
+      ExecutorService eventLoopExecutor,
       int maxConcurrency,
       InstantSource instantSource) {
     this.repository = inboxMessageRepository;
     this.dispatcher = dispatcher;
     this.continuationExecutor = continuationExecutor;
     this.retentionPolicy = retentionPolicy;
-    this.internalExecutorService = internalExecutorService;
+    this.retryExecutor = retryExecutor;
     this.maxConcurrency = validateMaxConcurrency(maxConcurrency);
+    this.eventLoopExecutor = eventLoopExecutor;
     this.instantSource = instantSource;
-
-    this.eventLoopThread =
-        new Thread(
-            Thread.currentThread().getThreadGroup(), this::eventLoop, "inbox-message-event-loop");
-    this.eventLoopThread.setDaemon(true);
-    this.eventLoopThread.start();
-
-    retentionPolicy.apply();
   }
 
   private static int validateMaxConcurrency(int maxConcurrency) {
@@ -83,6 +83,16 @@ class InboxController implements Inbox {
     }
     LOGGER.debug("Configuring maxConcurrency = {}", maxConcurrency);
     return maxConcurrency;
+  }
+
+  @Override
+  public void start() {
+    if (!started.compareAndSet(false, true)) {
+      throw new IllegalStateException("Inbox already started");
+    }
+
+    eventLoopTask = eventLoopExecutor.submit(this::eventLoop);
+    retentionPolicy.apply();
   }
 
   @Override
@@ -144,7 +154,7 @@ class InboxController implements Inbox {
     LOGGER.debug("Starting event loop");
     initializeEventLoop();
     try {
-      while (!Thread.currentThread().isInterrupted()) {
+      while (!currentThread().isInterrupted()) {
         processNextEvent();
 
         while (shouldTryToFetchNextMessage()) {
@@ -156,7 +166,7 @@ class InboxController implements Inbox {
         }
       }
     } catch (InterruptedException interruptedException) {
-      Thread.currentThread().interrupt();
+      currentThread().interrupt();
     }
     LOGGER.debug("Quiting dispatch loop");
   }
@@ -213,7 +223,7 @@ class InboxController implements Inbox {
     try {
       events.put(event);
     } catch (InterruptedException e) {
-      Thread.currentThread().interrupt();
+      currentThread().interrupt();
     }
   }
 
@@ -344,8 +354,7 @@ class InboxController implements Inbox {
   }
 
   private void scheduleRetry(long messageId, Duration delay) {
-    internalExecutorService.schedule(
-        () -> triggerRetry(messageId), delay.toMillis(), TimeUnit.MILLISECONDS);
+    retryExecutor.schedule(() -> triggerRetry(messageId), delay.toMillis(), TimeUnit.MILLISECONDS);
   }
 
   private void triggerRetry(long messageId) {
@@ -374,39 +383,28 @@ class InboxController implements Inbox {
   @Override
   public void close() {
     closed.set(true);
-    eventLoopThread.interrupt();
     dispatcher.shutdown();
     continuationExecutor.shutdown();
     retentionPolicy.shutdown();
-    internalExecutorService.shutdown();
+    retryExecutor.shutdown();
+    eventLoopExecutor.shutdown();
+    eventLoopTask.cancel(true);
 
     Instant waitUntil = instantSource.instant().plusSeconds(30);
 
     try {
-      for (Lifecycle lifecycle : List.of(dispatcher, continuationExecutor, retentionPolicy)) {
+      for (Lifecycle lifecycle :
+          List.of(
+              dispatcher,
+              continuationExecutor,
+              retentionPolicy,
+              new ExecutorAwareLifecycle<>(retryExecutor),
+              new ExecutorAwareLifecycle<>(eventLoopExecutor))) {
         Duration duration = Duration.between(instantSource.instant(), waitUntil);
-        if (duration.isNegative()) {
-          break;
-        }
-
         lifecycle.awaitTermination(duration);
       }
-
-      Duration duration = Duration.between(instantSource.instant(), waitUntil);
-      if (duration.isNegative()
-          || !internalExecutorService.awaitTermination(
-              duration.toMillis(), TimeUnit.MILLISECONDS)) {
-        internalExecutorService.shutdownNow();
-      }
-
-      duration = Duration.between(instantSource.instant(), waitUntil);
-      if (duration.isNegative()) {
-        return;
-      }
-
-      eventLoopThread.join(duration.toMillis());
     } catch (InterruptedException e) {
-      Thread.currentThread().interrupt();
+      currentThread().interrupt();
     }
   }
 

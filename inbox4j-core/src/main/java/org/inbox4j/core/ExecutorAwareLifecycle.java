@@ -17,10 +17,10 @@ import java.time.Duration;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 
-abstract class AbstractExecutorAwareLifecycle<T extends ExecutorService> implements Lifecycle {
+class ExecutorAwareLifecycle<T extends ExecutorService> implements Lifecycle {
   protected final T executor;
 
-  protected AbstractExecutorAwareLifecycle(T executor) {
+  protected ExecutorAwareLifecycle(T executor) {
     this.executor = executor;
   }
 
@@ -31,7 +31,9 @@ abstract class AbstractExecutorAwareLifecycle<T extends ExecutorService> impleme
 
   @Override
   public void awaitTermination(Duration timeout) throws InterruptedException {
-    if (!executor.awaitTermination(timeout.toMillis(), TimeUnit.MILLISECONDS)) {
+    if (timeout.isNegative()
+        || timeout.isZero()
+        || !executor.awaitTermination(timeout.toMillis(), TimeUnit.MILLISECONDS)) {
       executor.shutdownNow();
     }
   }
