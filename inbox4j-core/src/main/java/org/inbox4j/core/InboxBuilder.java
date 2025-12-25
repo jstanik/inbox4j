@@ -115,14 +115,17 @@ public class InboxBuilder {
     var continuationExecutor =
         new ContinuationExecutor(
             new ContinuationReferenceIssuer(), resolvedExecutorService, OTEL_PLUGIN);
+    var retentionPolicy =
+        new RetentionPolicy(
+            retentionPeriod, repository, resolvedInternalExecutorService, instantSource);
 
     return new InboxController(
         repository,
         dispatcher,
         continuationExecutor,
+        retentionPolicy,
         resolvedInternalExecutorService,
         maxConcurrency,
-        retentionPeriod,
         instantSource);
   }
 }

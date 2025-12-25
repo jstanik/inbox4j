@@ -37,11 +37,10 @@ class InboxController implements Inbox {
 
   private static final Logger LOGGER = LoggerFactory.getLogger(InboxController.class);
 
-  private static final Duration MINIMAL_RETENTION_PERIOD = Duration.ofHours(1);
-
   private final InboxMessageRepository repository;
   private final Dispatcher dispatcher;
   private final ContinuationExecutor continuationExecutor;
+  private final RetentionPolicy retentionPolicy;
   private final int maxConcurrency;
   private final ScheduledExecutorService internalExecutorService;
   private final Thread eventLoopThread;
@@ -57,13 +56,14 @@ class InboxController implements Inbox {
       InboxMessageRepository inboxMessageRepository,
       Dispatcher dispatcher,
       ContinuationExecutor continuationExecutor,
+      RetentionPolicy retentionPolicy,
       ScheduledExecutorService internalExecutorService,
       int maxConcurrency,
-      Duration retentionPeriod,
       InstantSource instantSource) {
     this.repository = inboxMessageRepository;
     this.dispatcher = dispatcher;
     this.continuationExecutor = continuationExecutor;
+    this.retentionPolicy = retentionPolicy;
     this.internalExecutorService = internalExecutorService;
     this.maxConcurrency = validateMaxConcurrency(maxConcurrency);
     this.instantSource = instantSource;
@@ -74,7 +74,7 @@ class InboxController implements Inbox {
     this.eventLoopThread.setDaemon(true);
     this.eventLoopThread.start();
 
-    initializeRetention(retentionPeriod);
+    retentionPolicy.apply();
   }
 
   private static int validateMaxConcurrency(int maxConcurrency) {
@@ -83,21 +83,6 @@ class InboxController implements Inbox {
     }
     LOGGER.debug("Configuring maxConcurrency = {}", maxConcurrency);
     return maxConcurrency;
-  }
-
-  private static void validateRetentionPeriod(Duration retentionPeriod) {
-    if (retentionPeriod.compareTo(MINIMAL_RETENTION_PERIOD) < 0) {
-      throw new IllegalArgumentException("timeRetention must be >= " + MINIMAL_RETENTION_PERIOD);
-    }
-  }
-
-  private void initializeRetention(Duration timeRetention) {
-    validateRetentionPeriod(timeRetention);
-    Duration defaultCheckPeriod = Duration.ofDays(1);
-    Duration checkPeriod =
-        timeRetention.compareTo(defaultCheckPeriod) < 0 ? timeRetention : defaultCheckPeriod;
-    internalExecutorService.scheduleAtFixedRate(
-        this::cleanup, 0, checkPeriod.toMillis(), TimeUnit.MILLISECONDS);
   }
 
   @Override
@@ -380,10 +365,6 @@ class InboxController implements Inbox {
                 continuationExecutor.execute(updatedMessage, continuationResult.getContinuation()));
   }
 
-  void cleanup() {
-    throw new UnsupportedOperationException(); // TODO
-  }
-
   private void checkNotClosed() {
     if (closed.get()) {
       throw new RejectedExecutionException("Inbox closed");
@@ -396,12 +377,13 @@ class InboxController implements Inbox {
     eventLoopThread.interrupt();
     dispatcher.shutdown();
     continuationExecutor.shutdown();
+    retentionPolicy.shutdown();
     internalExecutorService.shutdown();
 
     Instant waitUntil = instantSource.instant().plusSeconds(30);
 
     try {
-      for (Lifecycle lifecycle : List.of(dispatcher, continuationExecutor)) {
+      for (Lifecycle lifecycle : List.of(dispatcher, continuationExecutor, retentionPolicy)) {
         Duration duration = Duration.between(instantSource.instant(), waitUntil);
         if (duration.isNegative()) {
           return;

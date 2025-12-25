@@ -13,7 +13,8 @@ CREATE TABLE inbox_message (
     CONSTRAINT retry_status_requires_retry_at_value_chk CHECK ((status = 'RETRY') = (retry_at IS NOT NULL))
 );
 
-CREATE INDEX inbox_message_status ON inbox_message (status);
+CREATE INDEX inbox_message_status_idx ON inbox_message (status);
+CREATE INDEX inbox_message_completed_at_idx ON inbox_message (updated_at) WHERE status = 'COMPLETED';
 
 CREATE TABLE inbox_message_recipient (
     name             text   NOT NULL,
