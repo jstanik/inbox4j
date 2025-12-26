@@ -21,10 +21,10 @@ import java.time.InstantSource;
 import java.util.Deque;
 import java.util.LinkedList;
 import java.util.List;
-import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -52,7 +52,7 @@ class InboxController implements Inbox {
 
   private final Deque<Recipient> recipientsToCheck = new LinkedList<>();
   private final Deque<RetryTriggered> retryRequests = new LinkedList<>();
-  private final BlockingQueue<Event> events = new ArrayBlockingQueue<>(100, true);
+  private final BlockingQueue<Event> events = new LinkedBlockingQueue<>();
   private final AtomicBoolean started = new AtomicBoolean(false);
   private final AtomicBoolean closed = new AtomicBoolean(false);
   private int parallelCount = 0;
@@ -196,7 +196,7 @@ class InboxController implements Inbox {
     if (inboxMessageEvent instanceof RetryTriggered retry) {
       retryRequests.add(retry);
     } else {
-      recipientsToCheck.add(inboxMessageEvent.getRecipient());
+      recipientsToCheck.add(inboxMessageEvent.recipient());
     }
   }
 
@@ -414,25 +414,24 @@ class InboxController implements Inbox {
 
   private sealed interface InboxMessageEvent extends Event {
 
-    Recipient getRecipient();
+    Recipient recipient();
 
-    InboxMessage message();
+    long id();
 
     default String asString() {
       return getClass().getSimpleName()
           + "{inboxMessageId="
-          + message().getId()
+          + id()
           + ", recipientNames="
-          + message().getRecipientNames()
+          + recipient().names()
           + "}";
     }
   }
 
-  private record InboxMessageInserted(InboxMessage message) implements InboxMessageEvent {
+  private record InboxMessageInserted(long id, Recipient recipient) implements InboxMessageEvent {
 
-    @Override
-    public Recipient getRecipient() {
-      return new Recipient(message.getRecipientNames());
+    InboxMessageInserted(InboxMessage message) {
+      this(message.getId(), new Recipient(message.getRecipientNames()));
     }
 
     @Override
@@ -441,10 +440,10 @@ class InboxController implements Inbox {
     }
   }
 
-  private record ProcessingTerminated(InboxMessage message) implements InboxMessageEvent {
+  private record ProcessingTerminated(long id, Recipient recipient) implements InboxMessageEvent {
 
-    public Recipient getRecipient() {
-      return new Recipient(message.getRecipientNames());
+    ProcessingTerminated(InboxMessage message) {
+      this(message.getId(), new Recipient(message.getRecipientNames()));
     }
 
     @Override
@@ -453,11 +452,10 @@ class InboxController implements Inbox {
     }
   }
 
-  private record ContinuationCompleted(InboxMessage message) implements InboxMessageEvent {
+  private record ContinuationCompleted(long id, Recipient recipient) implements InboxMessageEvent {
 
-    @Override
-    public Recipient getRecipient() {
-      return new Recipient(message.getRecipientNames());
+    ContinuationCompleted(InboxMessage message) {
+      this(message.getId(), new Recipient(message.getRecipientNames()));
     }
 
     @Override
@@ -467,8 +465,14 @@ class InboxController implements Inbox {
   }
 
   private record RetryTriggered(InboxMessage message) implements InboxMessageEvent {
+
     @Override
-    public Recipient getRecipient() {
+    public long id() {
+      return message.getId();
+    }
+
+    @Override
+    public Recipient recipient() {
       return new Recipient(message.getRecipientNames());
     }
 
