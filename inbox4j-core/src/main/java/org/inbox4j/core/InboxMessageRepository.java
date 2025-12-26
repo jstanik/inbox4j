@@ -65,7 +65,7 @@ class InboxMessageRepository {
     this.sqls = new Sqls(configuration.tableInboxMessage, configuration.tableInboxMessageRecipient);
   }
 
-  InboxMessage insert(MessageInsertionRequest data) {
+  InboxMessage insert(SubmitInboxMessageRequest data) {
     if (data.getRecipientNames().isEmpty()) {
       throw new IllegalArgumentException("No recipient name provided for new inbox message");
     }
@@ -241,7 +241,7 @@ class InboxMessageRepository {
         });
   }
 
-  private long insertInboxMessage(Connection connection, MessageInsertionRequest data)
+  private long insertInboxMessage(Connection connection, SubmitInboxMessageRequest data)
       throws SQLException {
 
     try (var statement =

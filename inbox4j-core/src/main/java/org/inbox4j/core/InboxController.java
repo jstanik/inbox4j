@@ -96,14 +96,14 @@ class InboxController implements Inbox {
   }
 
   @Override
-  public InboxMessage insert(MessageInsertionRequest request) {
+  public InboxMessage submit(SubmitInboxMessageRequest submitRequest) {
     checkNotClosed();
 
-    if (!dispatcher.isSupported(request.getChannelName())) {
+    if (!dispatcher.isSupported(submitRequest.getChannelName())) {
       throw new IllegalArgumentException(
-          "No channel with the name '" + request.getChannelName() + "' configured");
+          "No channel with the name '" + submitRequest.getChannelName() + "' configured");
     }
-    var inboxMessage = repository.insert(request);
+    var inboxMessage = repository.insert(submitRequest);
     putEvent(new InboxMessageInserted(inboxMessage));
     return inboxMessage;
   }

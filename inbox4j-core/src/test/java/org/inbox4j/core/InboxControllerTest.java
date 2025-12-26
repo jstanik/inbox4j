@@ -62,10 +62,10 @@ class InboxControllerTest extends AbstractDatabaseTest {
     TestChannel channel = new TestChannel(CHANNEL);
     cut = (InboxController) Inbox.builder(dataSource).addChannel(channel).buildAndStart();
 
-    InboxMessage recipient1Message1 = cut.insert(inboxMessageData("recipient1"));
-    InboxMessage recipient1Message2 = cut.insert(inboxMessageData("recipient1"));
-    InboxMessage recipient2Message1 = cut.insert(inboxMessageData("recipient2"));
-    InboxMessage recipient2Message2 = cut.insert(inboxMessageData("recipient2"));
+    InboxMessage recipient1Message1 = cut.submit(inboxMessageData("recipient1"));
+    InboxMessage recipient1Message2 = cut.submit(inboxMessageData("recipient1"));
+    InboxMessage recipient2Message1 = cut.submit(inboxMessageData("recipient2"));
+    InboxMessage recipient2Message2 = cut.submit(inboxMessageData("recipient2"));
 
     var context = channel.awaitProcessing("recipient1");
     assertThat(context.message.getId()).isEqualTo(recipient1Message1.getId());
@@ -93,7 +93,7 @@ class InboxControllerTest extends AbstractDatabaseTest {
                 .addChannel(channel)
                 .buildAndStart();
 
-    InboxMessage message = cut.insert(inboxMessageData("recipient1"));
+    InboxMessage message = cut.submit(inboxMessageData("recipient1"));
 
     Duration retryDelay = Duration.ofMillis(100);
     var context = channel.awaitProcessing("recipient1", m -> new RetryResult(m, retryDelay));
@@ -118,7 +118,7 @@ class InboxControllerTest extends AbstractDatabaseTest {
     InboxMessageRepository repo =
         new InboxMessageRepository(new Configuration(dataSource).withInstantSource(instantSource));
     var recipientName = "recipient-to-retry";
-    var message = repo.insert(new MessageInsertionRequest(CHANNEL, new byte[0], recipientName));
+    var message = repo.insert(new SubmitInboxMessageRequest(CHANNEL, new byte[0], recipientName));
     var retryAt = instantSource.instant().minus(100, ChronoUnit.MILLIS);
     repo.update(message, Status.RETRY, null, retryAt);
 
@@ -138,7 +138,7 @@ class InboxControllerTest extends AbstractDatabaseTest {
   void inboxDispatchingNewFoundInDatabase() {
     InboxMessageRepository repo = new InboxMessageRepository(new Configuration(dataSource));
     var recipientName = "recipient1";
-    var message = repo.insert(new MessageInsertionRequest(CHANNEL, new byte[0], recipientName));
+    var message = repo.insert(new SubmitInboxMessageRequest(CHANNEL, new byte[0], recipientName));
 
     TestChannel channel = new TestChannel(CHANNEL);
     cut = (InboxController) Inbox.builder(dataSource).addChannel(channel).buildAndStart();
@@ -161,7 +161,7 @@ class InboxControllerTest extends AbstractDatabaseTest {
 
     String expectedTraceId;
     try (Scope ignore = span.makeCurrent()) {
-      cut.insert(inboxMessageData("recipient1"));
+      cut.submit(inboxMessageData("recipient1"));
       expectedTraceId = span.getSpanContext().getTraceId();
     } finally {
       span.end();
@@ -176,7 +176,7 @@ class InboxControllerTest extends AbstractDatabaseTest {
     FailingChannel channel = new FailingChannel(CHANNEL);
     cut = (InboxController) Inbox.builder(dataSource).addChannel(channel).buildAndStart();
 
-    InboxMessage message = cut.insert(inboxMessageData("recipient1"));
+    InboxMessage message = cut.submit(inboxMessageData("recipient1"));
 
     assertStatusReached(message.getId(), Status.ERROR, cut, Duration.ofSeconds(10));
   }
@@ -186,7 +186,7 @@ class InboxControllerTest extends AbstractDatabaseTest {
     ThrowingChannel channel = new ThrowingChannel(CHANNEL);
     cut = (InboxController) Inbox.builder(dataSource).addChannel(channel).buildAndStart();
 
-    InboxMessage message = cut.insert(inboxMessageData("recipient1"));
+    InboxMessage message = cut.submit(inboxMessageData("recipient1"));
 
     assertStatusReached(message.getId(), Status.ERROR, cut, Duration.ofSeconds(10));
   }
@@ -207,7 +207,7 @@ class InboxControllerTest extends AbstractDatabaseTest {
     InboxMessage message;
     try (Scope ignore = span.makeCurrent()) {
       expectedTraceId = span.getSpanContext().getTraceId();
-      message = cut.insert(inboxMessageData("recipient1"));
+      message = cut.submit(inboxMessageData("recipient1"));
     } finally {
       span.end();
     }
@@ -242,11 +242,11 @@ class InboxControllerTest extends AbstractDatabaseTest {
 
       for (String recipient : recipients) {
         var request =
-            new MessageInsertionRequest(CHANNEL, new byte[0], recipient, new byte[] {flag});
+            new SubmitInboxMessageRequest(CHANNEL, new byte[0], recipient, new byte[] {flag});
 
         messageIdsByRecipient
             .computeIfAbsent(recipient, k -> new ArrayList<>())
-            .add(cut.insert(request).getId());
+            .add(cut.submit(request).getId());
       }
     }
 
@@ -282,8 +282,8 @@ class InboxControllerTest extends AbstractDatabaseTest {
     fail("InboxMessage{id=" + id + "} hasn't reached the expected status " + expectedStatus);
   }
 
-  private static MessageInsertionRequest inboxMessageData(String recipientName) {
-    return new MessageInsertionRequest(CHANNEL, new byte[0], recipientName);
+  private static SubmitInboxMessageRequest inboxMessageData(String recipientName) {
+    return new SubmitInboxMessageRequest(CHANNEL, new byte[0], recipientName);
   }
 
   private static class TestChannel implements InboxMessageChannel {

@@ -40,9 +40,9 @@ class InboxMessageRepositoryTest extends AbstractDatabaseTest {
       new Configuration(dataSource).withInstantSource(instantSource).withOtelPlugin(otelPlugin);
 
   @Test
-  void insert() {
+  void submit() {
     InboxMessageRepository cut = new InboxMessageRepository(configuration);
-    MessageInsertionRequest request = messageInsertionRequest();
+    SubmitInboxMessageRequest request = messageInsertionRequest();
 
     InboxMessageEntity entity = (InboxMessageEntity) cut.insert(request);
 
@@ -59,9 +59,9 @@ class InboxMessageRepositoryTest extends AbstractDatabaseTest {
   }
 
   @Test
-  void insertWithOtelEnabled() {
+  void submitWithOtelEnabled() {
     InboxMessageRepository cut = new InboxMessageRepository(configuration);
-    MessageInsertionRequest request = messageInsertionRequest();
+    SubmitInboxMessageRequest request = messageInsertionRequest();
 
     Span span =
         GlobalOpenTelemetry.getTracer(InboxMessageRepositoryTest.class.getName())
@@ -79,20 +79,20 @@ class InboxMessageRepositoryTest extends AbstractDatabaseTest {
   }
 
   @Test
-  void insertWithOtelDisabled() {
+  void submitWithOtelDisabled() {
     InboxMessageRepository cut =
         new InboxMessageRepository(configuration.withOtelPlugin(new OtelPlugin(false)));
-    MessageInsertionRequest request = messageInsertionRequest();
+    SubmitInboxMessageRequest request = messageInsertionRequest();
     var entity = (InboxMessageEntity) cut.insert(request);
 
     assertThat(entity.getTraceContext()).isNull();
   }
 
   @Test
-  void insertFailsWhenNoRecipientNameProvided() {
+  void submitFailsWhenNoRecipientNameProvided() {
     InboxMessageRepository cut = new InboxMessageRepository(configuration);
-    MessageInsertionRequest data =
-        new MessageInsertionRequest("channel", new byte[0], List.of(), new byte[0]);
+    SubmitInboxMessageRequest data =
+        new SubmitInboxMessageRequest("channel", new byte[0], List.of(), new byte[0]);
 
     assertThatThrownBy(() -> cut.insert(data))
         .isInstanceOf(IllegalArgumentException.class)
@@ -123,7 +123,8 @@ class InboxMessageRepositoryTest extends AbstractDatabaseTest {
     InboxMessageRepository cut = new InboxMessageRepository(configuration);
     InboxMessage message =
         cut.insert(
-            new MessageInsertionRequest("channel", new byte[0], "recipientName", new byte[] {65}));
+            new SubmitInboxMessageRequest(
+                "channel", new byte[0], "recipientName", new byte[] {65}));
 
     InboxMessageEntity updatedMessage =
         (InboxMessageEntity) cut.update(message, Status.IN_PROGRESS, null, null);
@@ -352,7 +353,7 @@ class InboxMessageRepositoryTest extends AbstractDatabaseTest {
                 .withTableInboxMessage("inbox_message_custom")
                 .withTableInboxMessageRecipient("inbox_message_recipient_custom"));
 
-    MessageInsertionRequest request = messageInsertionRequest();
+    SubmitInboxMessageRequest request = messageInsertionRequest();
 
     assertThatCode(() -> cut.insert(request)).doesNotThrowAnyException();
   }
@@ -360,7 +361,7 @@ class InboxMessageRepositoryTest extends AbstractDatabaseTest {
   private static InboxMessage setUpInboxMessage(
       InboxMessageRepository repository, Status status, String... recipientNames) {
     var data =
-        new MessageInsertionRequest(
+        new SubmitInboxMessageRequest(
             "channel-1", new byte[] {65, 66, 67, 68}, Arrays.asList(recipientNames), new byte[0]);
     var message = repository.insert(data);
     Instant retryAt = null;
@@ -370,8 +371,8 @@ class InboxMessageRepositoryTest extends AbstractDatabaseTest {
     return repository.update(message, status, message.getMetadata(), retryAt);
   }
 
-  private static MessageInsertionRequest messageInsertionRequest() {
-    return new MessageInsertionRequest(
+  private static SubmitInboxMessageRequest messageInsertionRequest() {
+    return new SubmitInboxMessageRequest(
         "channel-1", new byte[] {65, 66}, List.of("name-1", "name-2"), new byte[] {67, 68});
   }
 }

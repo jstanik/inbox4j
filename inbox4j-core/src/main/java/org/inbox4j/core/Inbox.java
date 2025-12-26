@@ -40,14 +40,14 @@ public interface Inbox extends AutoCloseable {
   void start();
 
   /**
-   * Inserts a new message to the inbox according to the request. This method returns immediately
-   * after the message is inserted in inbox. It <b>does not</b> wait for the message to be
-   * dispatched to {@link InboxMessageChannel}.
+   * Submit a message to the inbox. This method returns immediately after the message is submitted
+   * to inbox. It <b>does not</b> wait for the message to be dispatched to {@link
+   * InboxMessageChannel}.
    *
-   * @param request describing the content of the inbox message
-   * @return the inserted inbox message
+   * @param submitRequest describing the inbox message to submit
+   * @return the submitted inbox message
    */
-  InboxMessage insert(MessageInsertionRequest request);
+  InboxMessage submit(SubmitInboxMessageRequest submitRequest);
 
   /**
    * Loads a message by its identifier.

@@ -16,8 +16,8 @@ package org.inbox4j.core;
 import java.util.Collection;
 import java.util.Set;
 
-/** A request to insert new message to the {@link Inbox}.¬ */
-public class MessageInsertionRequest {
+/** A request to submit a new message to the {@link Inbox}.¬ */
+public class SubmitInboxMessageRequest {
 
   private final String channelName;
   private final byte[] payload;
@@ -27,23 +27,23 @@ public class MessageInsertionRequest {
   /**
    * Creates a new request.
    *
-   * @param channelName the name of the channel the inserted message should be dispatched to
+   * @param channelName the name of the channel the submitted message should be dispatched to
    * @param payload the payload of the message
    * @param recipientName the name of the message recipient
    */
-  public MessageInsertionRequest(String channelName, byte[] payload, String recipientName) {
+  public SubmitInboxMessageRequest(String channelName, byte[] payload, String recipientName) {
     this(channelName, payload, Set.of(recipientName), null);
   }
 
   /**
    * Creates a new request.
    *
-   * @param channelName the name of the channel the inserted message should be dispatched to
+   * @param channelName the name of the channel the submitted message should be dispatched to
    * @param payload the payload of the message
    * @param recipientName the name of the message recipient
-   * @param metadata the metadata that will be attached to the inserted inbox message
+   * @param metadata the metadata that will be attached to the submitted inbox message
    */
-  public MessageInsertionRequest(
+  public SubmitInboxMessageRequest(
       String channelName, byte[] payload, String recipientName, byte[] metadata) {
     this(channelName, payload, Set.of(recipientName), metadata);
   }
@@ -51,12 +51,12 @@ public class MessageInsertionRequest {
   /**
    * Creates a new request.
    *
-   * @param channelName the name of the channel the inserted message should be dispatched to
+   * @param channelName the name of the channel the submitted message should be dispatched to
    * @param payload the payload of the message
    * @param recipientNames the various names of the recipient
-   * @param metadata the metadata that will be attached to the inserted inbox message
+   * @param metadata the metadata that will be attached to the submitted inbox message
    */
-  public MessageInsertionRequest(
+  public SubmitInboxMessageRequest(
       String channelName, byte[] payload, Collection<String> recipientNames, byte[] metadata) {
     this.channelName = channelName;
     this.payload = payload;
