@@ -23,6 +23,7 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
@@ -62,7 +63,6 @@ class InboxController implements Inbox {
       ContinuationExecutor continuationExecutor,
       RetryScheduler retryScheduler,
       RetentionPolicy retentionPolicy,
-      ExecutorService eventLoopExecutor,
       int maxConcurrency,
       InstantSource instantSource) {
     this.repository = inboxMessageRepository;
@@ -71,7 +71,7 @@ class InboxController implements Inbox {
     this.retentionPolicy = retentionPolicy;
     this.retryScheduler = retryScheduler;
     this.maxConcurrency = validateMaxConcurrency(maxConcurrency);
-    this.eventLoopExecutor = eventLoopExecutor;
+    this.eventLoopExecutor = createEventLoopExecutor();
     this.instantSource = instantSource;
   }
 
@@ -81,6 +81,10 @@ class InboxController implements Inbox {
     }
     LOGGER.debug("Configuring maxConcurrency = {}", maxConcurrency);
     return maxConcurrency;
+  }
+
+  private static ExecutorService createEventLoopExecutor() {
+    return Executors.newSingleThreadExecutor(runnable -> new Thread(runnable, "inbox-event-loop"));
   }
 
   @Override

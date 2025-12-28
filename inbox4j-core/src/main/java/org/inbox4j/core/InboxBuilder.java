@@ -34,7 +34,6 @@ public class InboxBuilder {
   private final List<InboxMessageChannel> channels = new ArrayList<>();
   private ExecutorService executorService;
   private ScheduledExecutorService internalExecutorService;
-  private ExecutorService eventLoopExecutor;
   private int maxConcurrency = Integer.MAX_VALUE;
   private InstantSource instantSource = InstantSource.system();
   private String tableInboxMessage;
@@ -90,19 +89,8 @@ public class InboxBuilder {
     return this;
   }
 
-  InboxBuilder withEventLoopExecutorService(ExecutorService executorService) {
-    this.eventLoopExecutor = executorService;
-    return this;
-  }
-
   private static ExecutorService ensureExecutorService(ExecutorService executorService) {
     return executorService != null ? executorService : Executors.newCachedThreadPool();
-  }
-
-  private static ExecutorService ensureEventLoopExecutorService(ExecutorService executorService) {
-    return executorService != null
-        ? executorService
-        : Executors.newSingleThreadExecutor(runnable -> new Thread(runnable, "inbox-event-loop"));
   }
 
   private static ScheduledExecutorService ensureInternalExecutorService(
@@ -122,7 +110,6 @@ public class InboxBuilder {
     var resolvedExecutorService = ensureExecutorService(this.executorService);
     var resolvedInternalExecutorService =
         ensureInternalExecutorService(this.internalExecutorService);
-    var resolvedEventLoopExecutorService = ensureEventLoopExecutorService(this.eventLoopExecutor);
 
     var dispatcher = new Dispatcher(channels, resolvedExecutorService, OTEL_PLUGIN);
     var continuationExecutor =
@@ -140,7 +127,6 @@ public class InboxBuilder {
         continuationExecutor,
         retryManager,
         retentionPolicy,
-        resolvedEventLoopExecutorService,
         maxConcurrency,
         instantSource);
   }
