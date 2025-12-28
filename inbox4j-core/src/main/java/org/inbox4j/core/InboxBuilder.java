@@ -128,6 +128,8 @@ public class InboxBuilder {
     var continuationExecutor =
         new ContinuationExecutor(
             new ContinuationReferenceIssuer(), resolvedExecutorService, OTEL_PLUGIN);
+    var retryManager =
+        new RetryScheduler(resolvedInternalExecutorService, repository, instantSource);
     var retentionPolicy =
         new RetentionPolicy(
             retentionPeriod, repository, resolvedInternalExecutorService, instantSource);
@@ -136,8 +138,8 @@ public class InboxBuilder {
         repository,
         dispatcher,
         continuationExecutor,
+        retryManager,
         retentionPolicy,
-        resolvedInternalExecutorService,
         resolvedEventLoopExecutorService,
         maxConcurrency,
         instantSource);

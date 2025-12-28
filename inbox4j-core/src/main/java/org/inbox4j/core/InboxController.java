@@ -26,8 +26,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.inbox4j.core.ContinuationReferenceIssuer.IdVersion;
 import org.inbox4j.core.InboxMessage.Status;
@@ -46,7 +44,7 @@ class InboxController implements Inbox {
   private final ContinuationExecutor continuationExecutor;
   private final RetentionPolicy retentionPolicy;
   private final int maxConcurrency;
-  private final ScheduledExecutorService retryExecutor;
+  private final RetryScheduler retryScheduler;
   private final ExecutorService eventLoopExecutor;
   private final InstantSource instantSource;
 
@@ -62,8 +60,8 @@ class InboxController implements Inbox {
       InboxMessageRepository inboxMessageRepository,
       Dispatcher dispatcher,
       ContinuationExecutor continuationExecutor,
+      RetryScheduler retryScheduler,
       RetentionPolicy retentionPolicy,
-      ScheduledExecutorService retryExecutor,
       ExecutorService eventLoopExecutor,
       int maxConcurrency,
       InstantSource instantSource) {
@@ -71,7 +69,7 @@ class InboxController implements Inbox {
     this.dispatcher = dispatcher;
     this.continuationExecutor = continuationExecutor;
     this.retentionPolicy = retentionPolicy;
-    this.retryExecutor = retryExecutor;
+    this.retryScheduler = retryScheduler;
     this.maxConcurrency = validateMaxConcurrency(maxConcurrency);
     this.eventLoopExecutor = eventLoopExecutor;
     this.instantSource = instantSource;
@@ -175,7 +173,7 @@ class InboxController implements Inbox {
   }
 
   private void initializeEventLoop() {
-    scheduleRetries();
+    retryScheduler.schedulePendingRetries(this::retryTriggered);
     loadWaitingRecipients();
     putEvent(new InitializationCompletedEvent());
   }
@@ -262,20 +260,6 @@ class InboxController implements Inbox {
     recipientsToCheck.addAll(initialRecipientToCheck);
   }
 
-  private void scheduleRetries() {
-    Instant currentTime = instantSource.instant();
-    repository
-        .findInboxMessagesForRetry()
-        .forEach(
-            messageView -> {
-              var delay = Duration.between(currentTime, messageView.retryAt());
-              if (delay.isNegative()) {
-                delay = Duration.ZERO;
-              }
-              scheduleRetry(messageView.id(), delay);
-            });
-  }
-
   private void dispatch(InboxMessage message) {
     checkMessageIsInProgress(message);
     dispatcher
@@ -359,12 +343,10 @@ class InboxController implements Inbox {
         .status(Status.RETRY)
         .metadata(retryResult.getMetadata())
         .retryAt(retryAt)
-        .execute(updatedMessage -> scheduleRetry(updatedMessage.getId(), retryResult.getDelay()));
-  }
-
-  private void scheduleRetry(long messageId, Duration delay) {
-    retryExecutor.schedule(
-        () -> retryTriggered(messageId), delay.toMillis(), TimeUnit.MILLISECONDS);
+        .execute(
+            updatedMessage ->
+                retryScheduler.scheduleRetry(
+                    updatedMessage.getId(), retryResult.getDelay(), this::retryTriggered));
   }
 
   private void retryTriggered(long messageId) {
@@ -397,8 +379,8 @@ class InboxController implements Inbox {
     closed.set(true);
     dispatcher.shutdown();
     continuationExecutor.shutdown();
+    retryScheduler.shutdown();
     retentionPolicy.shutdown();
-    retryExecutor.shutdown();
     eventLoopExecutor.shutdown();
     eventLoopTask.cancel(true);
 
@@ -409,8 +391,8 @@ class InboxController implements Inbox {
           List.of(
               dispatcher,
               continuationExecutor,
+              retryScheduler,
               retentionPolicy,
-              new ExecutorAwareLifecycle<>(retryExecutor),
               new ExecutorAwareLifecycle<>(eventLoopExecutor))) {
         Duration duration = Duration.between(instantSource.instant(), waitUntil);
         lifecycle.awaitTermination(duration);
