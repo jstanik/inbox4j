@@ -153,8 +153,9 @@ class InboxController implements Inbox {
   private void eventLoop() {
     LOGGER.debug("Starting event loop");
     initializeEventLoop();
-    try {
-      while (!currentThread().isInterrupted()) {
+
+    while (!currentThread().isInterrupted()) {
+      try {
         processNextEvent();
 
         while (shouldTryToFetchNextMessage()) {
@@ -164,9 +165,11 @@ class InboxController implements Inbox {
             markAsInProgressAndDispatch(inboxMessage);
           }
         }
+      } catch (InterruptedException interruptedException) {
+        currentThread().interrupt();
+      } catch (Exception exception) {
+        LOGGER.error("Unexpected error during processing an event", exception);
       }
-    } catch (InterruptedException interruptedException) {
-      currentThread().interrupt();
     }
     LOGGER.debug("Quiting dispatch loop");
   }
