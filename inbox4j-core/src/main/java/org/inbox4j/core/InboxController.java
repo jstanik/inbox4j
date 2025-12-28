@@ -95,6 +95,10 @@ class InboxController implements Inbox {
 
     eventLoopTask = eventLoopExecutor.submit(this::eventLoop);
     retentionPolicy.apply();
+
+    if (closed.get()) {
+      throw new IllegalStateException("Inbox has been closed during startup procedure.");
+    }
   }
 
   @Override
@@ -168,7 +172,7 @@ class InboxController implements Inbox {
       } catch (InterruptedException interruptedException) {
         currentThread().interrupt();
       } catch (Exception exception) {
-        LOGGER.error("Unexpected error during processing an event", exception);
+        LOGGER.error("Unexpected error during processing of an event", exception);
       }
     }
     LOGGER.debug("Quiting dispatch loop");
