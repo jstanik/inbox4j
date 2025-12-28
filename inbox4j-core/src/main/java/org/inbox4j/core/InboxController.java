@@ -93,6 +93,10 @@ class InboxController implements Inbox {
       throw new IllegalStateException("Inbox already started");
     }
 
+    if (closed.get()) {
+      throw new IllegalStateException("Inbox already closed");
+    }
+
     eventLoopTask = eventLoopExecutor.submit(this::eventLoop);
     retentionPolicy.apply();
 
@@ -385,7 +389,9 @@ class InboxController implements Inbox {
     retryScheduler.shutdown();
     retentionPolicy.shutdown();
     eventLoopExecutor.shutdown();
-    eventLoopTask.cancel(true);
+    if (eventLoopTask != null) {
+      eventLoopTask.cancel(true);
+    }
 
     Instant waitUntil = instantSource.instant().plusSeconds(30);
 
