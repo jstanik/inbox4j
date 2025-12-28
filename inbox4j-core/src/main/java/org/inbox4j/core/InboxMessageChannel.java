@@ -37,7 +37,15 @@ public interface InboxMessageChannel {
 
   /** The result of the inbox message processing. */
   sealed interface ProcessingResult
-      permits ContinuationResult, ProcessingFailedResult, ProcessingSucceededResult, RetryResult {}
+      permits ContinuationResult, ProcessingFailedResult, ProcessingSucceededResult, RetryResult {
+
+    /**
+     * Gets the inbox messages whose processing finished.
+     *
+     * @return the inbox message
+     */
+    InboxMessage getInboxMessage();
+  }
 
   /** A successful result. */
   final class ProcessingSucceededResult extends AbstractProcessingResult

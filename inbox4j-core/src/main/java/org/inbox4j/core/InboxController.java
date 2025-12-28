@@ -132,10 +132,8 @@ class InboxController implements Inbox {
       status = Status.ERROR;
     }
 
-    var maybeUpdatedMessage =
-        tryUpdate(message).status(status).metadata(message.getMetadata()).retryAt(null).execute();
-
-    putEvent(new ContinuationCompleted(maybeUpdatedMessage));
+    var updatedMessage = repository.update(message, status, message.getMetadata(), null);
+    putEvent(new ContinuationCompleted(updatedMessage));
   }
 
   @Override
@@ -274,20 +272,29 @@ class InboxController implements Inbox {
                   message.getId(),
                   processingResult);
 
-              InboxMessage updatedMessage;
-              if (processingResult instanceof ProcessingSucceededResult succeededResult) {
-                updatedMessage = handleProcessingSucceeded(succeededResult);
-              } else if (processingResult instanceof ProcessingFailedResult failedResult) {
-                updatedMessage = handleProcessingFailed(failedResult);
-              } else if (processingResult instanceof RetryResult retryResult) {
-                updatedMessage = handleRetryResult(retryResult);
-              } else if (processingResult instanceof ContinuationResult continuationResult) {
-                updatedMessage = handleContinuationResult(continuationResult);
-              } else {
-                throw new UnsupportedOperationException(
-                    "Result type" + processingResult.getClass().getName() + " not supported yet!");
+              try {
+                if (processingResult instanceof ProcessingSucceededResult succeededResult) {
+                  handleProcessingSucceeded(succeededResult);
+                } else if (processingResult instanceof ProcessingFailedResult failedResult) {
+                  handleProcessingFailed(failedResult);
+                } else if (processingResult instanceof RetryResult retryResult) {
+                  handleRetryResult(retryResult);
+                } else if (processingResult instanceof ContinuationResult continuationResult) {
+                  handleContinuationResult(continuationResult);
+                } else {
+                  throw new UnsupportedOperationException(
+                      "Result type"
+                          + processingResult.getClass().getName()
+                          + " not supported yet!");
+                }
+              } catch (Exception handlingException) {
+                LOGGER.error(
+                    "Error while handling processing result of InboxMessage{id={}}.",
+                    processingResult.getInboxMessage().getId(),
+                    handlingException);
+              } finally {
+                putEvent(new ProcessingTerminated(processingResult.getInboxMessage()));
               }
-              putEvent(new ProcessingTerminated(updatedMessage));
             });
   }
 
@@ -303,50 +310,39 @@ class InboxController implements Inbox {
     }
   }
 
-  private InboxMessage handleProcessingSucceeded(ProcessingSucceededResult succeeded) {
-    return tryUpdate(succeeded.getInboxMessage())
-        .status(Status.COMPLETED)
-        .metadata(succeeded.getMetadata())
-        .retryAt(null)
-        .execute();
+  private void handleProcessingSucceeded(ProcessingSucceededResult succeeded) {
+    repository.update(succeeded.getInboxMessage(), Status.COMPLETED, succeeded.getMetadata(), null);
   }
 
-  private InboxMessage handleProcessingFailed(ProcessingFailedResult failed) {
+  private void handleProcessingFailed(ProcessingFailedResult failed) {
     LOGGER
         .atError()
         .setCause(failed.getError())
         .addArgument(failed.getInboxMessage()::getId)
         .log("InboxMessage{id={}} processing failed");
 
-    return tryUpdate(failed.getInboxMessage())
-        .status(Status.ERROR)
-        .metadata(failed.getMetadata())
-        .retryAt(null)
-        .execute();
+    repository.update(failed.getInboxMessage(), Status.ERROR, failed.getMetadata(), null);
   }
 
-  private InboxMessage handleContinuationResult(ContinuationResult continuationResult) {
-    return tryUpdate(continuationResult.getInboxMessage())
-        .status(Status.WAITING_FOR_CONTINUATION)
-        .metadata(continuationResult.getMetadata())
-        .retryAt(null)
-        .execute(
-            updatedMessage ->
-                continuationExecutor.execute(updatedMessage, continuationResult.getContinuation()));
+  private void handleContinuationResult(ContinuationResult continuationResult) {
+    var updatedMessage =
+        repository.update(
+            continuationResult.getInboxMessage(),
+            Status.WAITING_FOR_CONTINUATION,
+            continuationResult.getMetadata(),
+            null);
+
+    continuationExecutor.execute(updatedMessage, continuationResult.getContinuation());
   }
 
-  private InboxMessage handleRetryResult(RetryResult retryResult) {
+  private void handleRetryResult(RetryResult retryResult) {
     var currentInstant = instantSource.instant();
     var retryAt = currentInstant.plus(retryResult.getDelay());
-
-    return tryUpdate(retryResult.getInboxMessage())
-        .status(Status.RETRY)
-        .metadata(retryResult.getMetadata())
-        .retryAt(retryAt)
-        .execute(
-            updatedMessage ->
-                retryScheduler.scheduleRetry(
-                    updatedMessage.getId(), retryResult.getDelay(), this::retryTriggered));
+    var updatedMessage =
+        repository.update(
+            retryResult.getInboxMessage(), Status.RETRY, retryResult.getMetadata(), retryAt);
+    retryScheduler.scheduleRetry(
+        updatedMessage.getId(), retryResult.getDelay(), this::retryTriggered);
   }
 
   private void retryTriggered(long messageId) {
@@ -362,10 +358,6 @@ class InboxController implements Inbox {
               + "} not in the expecte status "
               + Status.RETRY);
     }
-  }
-
-  private UpdateStatusSpec tryUpdate(InboxMessage inboxMessage) {
-    return new TryUpdateOperation(inboxMessage, repository);
   }
 
   private void checkNotClosed() {
