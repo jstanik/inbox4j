@@ -203,7 +203,10 @@ class InboxController implements Inbox {
     if (inboxMessageEvent instanceof RetryTriggered retry) {
       retryRequests.add(retry);
     } else {
-      recipientsToCheck.add(inboxMessageEvent.recipient());
+      var recipient = inboxMessageEvent.recipient();
+      if (!recipientsToCheck.contains(recipient)) {
+        recipientsToCheck.add(recipient);
+      }
     }
   }
 
