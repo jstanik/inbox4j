@@ -341,6 +341,16 @@ class InboxController implements Inbox {
         .execute();
   }
 
+  private InboxMessage handleContinuationResult(ContinuationResult continuationResult) {
+    return tryUpdate(continuationResult.getInboxMessage())
+        .status(Status.WAITING_FOR_CONTINUATION)
+        .metadata(continuationResult.getMetadata())
+        .retryAt(null)
+        .execute(
+            updatedMessage ->
+                continuationExecutor.execute(updatedMessage, continuationResult.getContinuation()));
+  }
+
   private InboxMessage handleRetryResult(RetryResult retryResult) {
     var currentInstant = instantSource.instant();
     var retryAt = currentInstant.plus(retryResult.getDelay());
@@ -352,29 +362,28 @@ class InboxController implements Inbox {
         .execute(updatedMessage -> scheduleRetry(updatedMessage.getId(), retryResult.getDelay()));
   }
 
-  private UpdateStatusSpec tryUpdate(InboxMessage inboxMessage) {
-    return new TryUpdateOperation(inboxMessage, repository);
-  }
-
   private void scheduleRetry(long messageId, Duration delay) {
-    retryExecutor.schedule(() -> triggerRetry(messageId), delay.toMillis(), TimeUnit.MILLISECONDS);
+    retryExecutor.schedule(
+        () -> retryTriggered(messageId), delay.toMillis(), TimeUnit.MILLISECONDS);
   }
 
-  private void triggerRetry(long messageId) {
+  private void retryTriggered(long messageId) {
     InboxMessage message = repository.load(messageId);
     if (message.getStatus().equals(Status.RETRY)) {
       putEvent(new RetryTriggered(message));
+    } else {
+      throw new IllegalStateException(
+          "InboxMessage{id="
+              + message
+              + ", status="
+              + message.getStatus()
+              + "} not in the expecte status "
+              + Status.RETRY);
     }
   }
 
-  private InboxMessage handleContinuationResult(ContinuationResult continuationResult) {
-    return tryUpdate(continuationResult.getInboxMessage())
-        .status(Status.WAITING_FOR_CONTINUATION)
-        .metadata(continuationResult.getMetadata())
-        .retryAt(null)
-        .execute(
-            updatedMessage ->
-                continuationExecutor.execute(updatedMessage, continuationResult.getContinuation()));
+  private UpdateStatusSpec tryUpdate(InboxMessage inboxMessage) {
+    return new TryUpdateOperation(inboxMessage, repository);
   }
 
   private void checkNotClosed() {
