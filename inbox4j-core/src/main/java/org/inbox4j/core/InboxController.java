@@ -384,25 +384,23 @@ class InboxController implements Inbox {
   @Override
   public void close() {
     closed.set(true);
-    dispatcher.shutdown();
-    continuationExecutor.shutdown();
-    retryScheduler.shutdown();
-    retentionPolicy.shutdown();
-    eventLoopExecutor.shutdown();
     if (eventLoopTask != null) {
       eventLoopTask.cancel(true);
     }
 
     Instant waitUntil = instantSource.instant().plusSeconds(30);
+    List<ExecutorAwareLifecycle<? extends ExecutorService>> resources =
+        List.of(
+            dispatcher,
+            continuationExecutor,
+            retryScheduler,
+            retentionPolicy,
+            new ExecutorAwareLifecycle<>(eventLoopExecutor));
+
+    resources.forEach(ExecutorAwareLifecycle::shutdown);
 
     try {
-      for (Lifecycle lifecycle :
-          List.of(
-              dispatcher,
-              continuationExecutor,
-              retryScheduler,
-              retentionPolicy,
-              new ExecutorAwareLifecycle<>(eventLoopExecutor))) {
+      for (Lifecycle lifecycle : resources) {
         Duration duration = Duration.between(instantSource.instant(), waitUntil);
         lifecycle.awaitTermination(duration);
       }
