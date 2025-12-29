@@ -29,9 +29,11 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.BiConsumer;
 import org.inbox4j.core.ContinuationReferenceIssuer.IdVersion;
 import org.inbox4j.core.InboxMessage.Status;
 import org.inbox4j.core.InboxMessageChannel.ProcessingFailedResult;
+import org.inbox4j.core.InboxMessageChannel.ProcessingResult;
 import org.inbox4j.core.InboxMessageChannel.ProcessingSucceededResult;
 import org.inbox4j.core.InboxMessageChannel.RetryResult;
 import org.slf4j.Logger;
@@ -266,7 +268,7 @@ class InboxController implements Inbox {
     }
     parallelCount++;
     LOGGER.debug("Parallel count increased: {}", parallelCount);
-    dispatch(updatedMessage);
+    dispatcher.dispatch(updatedMessage).whenComplete(createProcessingResultHandler(updatedMessage));
   }
 
   private void loadWaitingRecipients() {
@@ -277,56 +279,39 @@ class InboxController implements Inbox {
     recipientsToCheck.addAll(initialRecipientToCheck);
   }
 
-  private void dispatch(InboxMessage message) {
-    checkMessageIsInProgress(message);
-    dispatcher
-        .dispatch(message)
-        .whenComplete(
-            (processingResult, exception) -> {
-              if (exception != null) {
-                processingResult = new ProcessingFailedResult(message, exception);
-              }
-              LOGGER.debug(
-                  "Processing of InboxMessage{id={}} finished with result {}",
-                  message.getId(),
-                  processingResult);
+  private BiConsumer<ProcessingResult, Throwable> createProcessingResultHandler(
+      InboxMessage message) {
+    return (processingResult, exception) -> {
+      if (exception != null) {
+        processingResult = new ProcessingFailedResult(message, exception);
+      }
+      LOGGER.debug(
+          "Processing of InboxMessage{id={}} finished with result {}",
+          message.getId(),
+          processingResult);
 
-              try {
-                if (processingResult instanceof ProcessingSucceededResult succeededResult) {
-                  handleProcessingSucceeded(succeededResult);
-                } else if (processingResult instanceof ProcessingFailedResult failedResult) {
-                  handleProcessingFailed(failedResult);
-                } else if (processingResult instanceof RetryResult retryResult) {
-                  handleRetryResult(retryResult);
-                } else if (processingResult instanceof ContinuationResult continuationResult) {
-                  handleContinuationResult(continuationResult);
-                } else {
-                  throw new UnsupportedOperationException(
-                      "Result type"
-                          + processingResult.getClass().getName()
-                          + " not supported yet!");
-                }
-              } catch (Exception handlingException) {
-                LOGGER.error(
-                    "Error while handling processing result of InboxMessage{id={}}.",
-                    processingResult.getInboxMessage().getId(),
-                    handlingException);
-              } finally {
-                putEvent(new ProcessingTerminated(processingResult.getInboxMessage()));
-              }
-            });
-  }
-
-  private static void checkMessageIsInProgress(InboxMessage message) {
-    if (!Status.IN_PROGRESS.equals(message.getStatus())) {
-      throw new IllegalArgumentException(
-          "InboxMessage{id="
-              + message.getId()
-              + "} can be dispatched because it has the status "
-              + message.getStatus()
-              + " and not the required status "
-              + Status.IN_PROGRESS);
-    }
+      try {
+        if (processingResult instanceof ProcessingSucceededResult succeededResult) {
+          handleProcessingSucceeded(succeededResult);
+        } else if (processingResult instanceof ProcessingFailedResult failedResult) {
+          handleProcessingFailed(failedResult);
+        } else if (processingResult instanceof RetryResult retryResult) {
+          handleRetryResult(retryResult);
+        } else if (processingResult instanceof ContinuationResult continuationResult) {
+          handleContinuationResult(continuationResult);
+        } else {
+          throw new UnsupportedOperationException(
+              "Result type" + processingResult.getClass().getName() + " not supported yet!");
+        }
+      } catch (Exception handlingException) {
+        LOGGER.error(
+            "Error while handling processing result of InboxMessage{id={}}.",
+            processingResult.getInboxMessage().getId(),
+            handlingException);
+      } finally {
+        putEvent(new ProcessingTerminated(processingResult.getInboxMessage()));
+      }
+    };
   }
 
   private void handleProcessingSucceeded(ProcessingSucceededResult succeeded) {
