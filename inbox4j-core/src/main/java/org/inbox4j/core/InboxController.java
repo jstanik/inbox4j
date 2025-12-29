@@ -28,6 +28,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.ReentrantLock;
 import org.inbox4j.core.ContinuationReferenceIssuer.IdVersion;
 import org.inbox4j.core.InboxMessage.Status;
 import org.inbox4j.core.InboxMessageChannel.ProcessingFailedResult;
@@ -52,6 +53,7 @@ class InboxController implements Inbox {
   private final Deque<Recipient> recipientsToCheck = new LinkedList<>();
   private final Deque<RetryTriggered> retryRequests = new LinkedList<>();
   private final BlockingQueue<Event> events = new LinkedBlockingQueue<>();
+  private final ReentrantLock lifecycleLock = new ReentrantLock();
   private final AtomicBoolean started = new AtomicBoolean(false);
   private final AtomicBoolean closed = new AtomicBoolean(false);
   private int parallelCount = 0;
@@ -89,19 +91,21 @@ class InboxController implements Inbox {
 
   @Override
   public void start() {
-    if (!started.compareAndSet(false, true)) {
-      throw new IllegalStateException("Inbox already started");
-    }
+    lifecycleLock.lock();
 
-    if (closed.get()) {
-      throw new IllegalStateException("Inbox already closed");
-    }
+    try {
+      if (!started.compareAndSet(false, true)) {
+        throw new IllegalStateException("Inbox already started");
+      }
 
-    eventLoopTask = eventLoopExecutor.submit(this::eventLoop);
-    retentionPolicy.apply();
+      if (closed.get()) {
+        throw new IllegalStateException("Inbox already closed");
+      }
 
-    if (closed.get()) {
-      throw new IllegalStateException("Inbox has been closed during startup procedure.");
+      eventLoopTask = eventLoopExecutor.submit(this::eventLoop);
+      retentionPolicy.apply();
+    } finally {
+      lifecycleLock.unlock();
     }
   }
 
@@ -370,7 +374,7 @@ class InboxController implements Inbox {
               + message
               + ", status="
               + message.getStatus()
-              + "} not in the expecte status "
+              + "} not in the expected status "
               + Status.RETRY);
     }
   }
@@ -383,29 +387,32 @@ class InboxController implements Inbox {
 
   @Override
   public void close() {
-    closed.set(true);
-    if (eventLoopTask != null) {
-      eventLoopTask.cancel(true);
-    }
-
-    Instant waitUntil = instantSource.instant().plusSeconds(30);
-    List<ExecutorAwareLifecycle<? extends ExecutorService>> resources =
-        List.of(
-            dispatcher,
-            continuationExecutor,
-            retryScheduler,
-            retentionPolicy,
-            new ExecutorAwareLifecycle<>(eventLoopExecutor));
-
-    resources.forEach(ExecutorAwareLifecycle::shutdown);
-
+    lifecycleLock.lock();
     try {
+      closed.set(true);
+      if (eventLoopTask != null) {
+        eventLoopTask.cancel(true);
+      }
+
+      Instant waitUntil = instantSource.instant().plusSeconds(30);
+      List<ExecutorAwareLifecycle<? extends ExecutorService>> resources =
+          List.of(
+              dispatcher,
+              continuationExecutor,
+              retryScheduler,
+              retentionPolicy,
+              new ExecutorAwareLifecycle<>(eventLoopExecutor));
+
+      resources.forEach(ExecutorAwareLifecycle::shutdown);
+
       for (Lifecycle lifecycle : resources) {
         Duration duration = Duration.between(instantSource.instant(), waitUntil);
         lifecycle.awaitTermination(duration);
       }
     } catch (InterruptedException e) {
       currentThread().interrupt();
+    } finally {
+      lifecycleLock.unlock();
     }
   }
 
