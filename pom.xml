@@ -249,7 +249,7 @@
             <forbidWildcardImports/>
             <forbidModuleImports/>
             <licenseHeader>
-              <file>${project.basedir}/license-header</file>
+              <file>${project.basedir}/file-header</file>
             </licenseHeader>
           </java>
         </configuration>
