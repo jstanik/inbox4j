@@ -19,7 +19,7 @@
     <junit-jupiter.version>6.0.1</junit-jupiter.version>
     <logback.version>1.5.23</logback.version>
     <mockito.version>5.21.0</mockito.version>
-    <opentelemetry.version>1.57.0</opentelemetry.version>
+    <opentelemetry.version>1.58.0</opentelemetry.version>
     <opentelemetry-javaagent.version>2.23.0</opentelemetry-javaagent.version>
     <postgresql-jdbc-driver.version>42.7.8</postgresql-jdbc-driver.version>
     <postgresql-testcontainers.version>2.0.3</postgresql-testcontainers.version>
