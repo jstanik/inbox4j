@@ -21,7 +21,7 @@
     <mockito.version>5.21.0</mockito.version>
     <opentelemetry.version>1.58.0</opentelemetry.version>
     <opentelemetry-javaagent.version>2.24.0</opentelemetry-javaagent.version>
-    <postgresql-jdbc-driver.version>42.7.8</postgresql-jdbc-driver.version>
+    <postgresql-jdbc-driver.version>42.7.9</postgresql-jdbc-driver.version>
     <postgresql-testcontainers.version>2.0.3</postgresql-testcontainers.version>
     <slf4j.version>2.0.17</slf4j.version>
 
